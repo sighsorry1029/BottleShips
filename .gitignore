@@ -1,0 +1,13 @@
+.idea/
+.vs/
+_ReSharper.Caches/
+*.sln.DotSettings.user
+*.user
+
+packages/
+BottleShips/bin/
+BottleShips/obj/
+
+BottleShips/Thunderstore/*.zip
+BottleShips/Thunderstore/BottleShips_v*/
+BottleShips/Nexus/
