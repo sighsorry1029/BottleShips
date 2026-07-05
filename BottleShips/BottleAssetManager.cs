@@ -11,8 +11,11 @@ namespace BottleShips;
 internal static class BottleAssetManager
 {
     private static readonly Dictionary<string, AssetBundle> Bundles = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, Sprite> IconSprites = new(StringComparer.OrdinalIgnoreCase);
     private static readonly List<GameObject> BottleItemPrefabs = new();
     private const int IconLayer = 30;
+    private const int EmbeddedIconSize = 64;
+    private const int EmbeddedIconBytesPerPixel = 4;
     private const float IconSnapshotZoom = 2f;
     private static readonly Vector3 IconSnapshotRotation = new(135f, 90f, 135f);
 
@@ -28,7 +31,10 @@ internal static class BottleAssetManager
         if (prefab.TryGetComponent(out ItemDrop itemDrop))
         {
             itemDrop.m_itemData.m_dropPrefab = prefab;
-            SnapshotItem(itemDrop);
+            if (!ApplyEmbeddedIcon(itemDrop, prefabName))
+            {
+                SnapshotItem(itemDrop);
+            }
         }
         else
         {
@@ -88,7 +94,11 @@ internal static class BottleAssetManager
         {
             if (prefab != null && prefab.TryGetComponent(out ItemDrop itemDrop))
             {
-                SnapshotItem(itemDrop);
+                if (!ApplyEmbeddedIcon(itemDrop, prefab.name))
+                {
+                    SnapshotItem(itemDrop);
+                }
+
                 refreshed = true;
             }
         }
@@ -116,6 +126,71 @@ internal static class BottleAssetManager
         bundle = AssetBundle.LoadFromStream(stream);
         Bundles[assetBundleName] = bundle;
         return bundle;
+    }
+
+    private static bool ApplyEmbeddedIcon(ItemDrop item, string prefabName)
+    {
+        Sprite? icon = LoadEmbeddedIcon(prefabName);
+        if (icon == null)
+        {
+            return false;
+        }
+
+        item.m_itemData.m_shared.m_icons = new[] { icon };
+        return true;
+    }
+
+    private static Sprite? LoadEmbeddedIcon(string prefabName)
+    {
+        if (IconSprites.TryGetValue(prefabName, out Sprite cachedIcon) && cachedIcon != null)
+        {
+            return cachedIcon;
+        }
+
+        string resourceName = $"{Assembly.GetExecutingAssembly().GetName().Name}.assets.icons.{prefabName}.rgba";
+        using Stream? stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName);
+        if (stream == null)
+        {
+            BottleShipsPlugin.BottleShipsLogger.LogWarning($"Embedded bottle icon '{resourceName}' was not found. Falling back to runtime icon snapshot.");
+            return null;
+        }
+
+        int expectedLength = EmbeddedIconSize * EmbeddedIconSize * EmbeddedIconBytesPerPixel;
+        byte[] rawTextureData = new byte[expectedLength];
+        int bytesRead = 0;
+        while (bytesRead < rawTextureData.Length)
+        {
+            int read = stream.Read(rawTextureData, bytesRead, rawTextureData.Length - bytesRead);
+            if (read == 0)
+            {
+                break;
+            }
+
+            bytesRead += read;
+        }
+
+        if (bytesRead != expectedLength || stream.ReadByte() != -1)
+        {
+            BottleShipsPlugin.BottleShipsLogger.LogWarning($"Embedded bottle icon '{resourceName}' has invalid size. Falling back to runtime icon snapshot.");
+            return null;
+        }
+
+        Texture2D texture = new(EmbeddedIconSize, EmbeddedIconSize, TextureFormat.RGBA32, false)
+        {
+            name = $"{prefabName}_icon",
+            wrapMode = TextureWrapMode.Clamp,
+            filterMode = FilterMode.Bilinear,
+        };
+
+        texture.LoadRawTextureData(rawTextureData);
+        texture.Apply(false, false);
+
+        Rect rect = new(0, 0, texture.width, texture.height);
+        Sprite icon = Sprite.Create(texture, rect, new Vector2(0.5f, 0.5f));
+        icon.name = $"{prefabName}_icon";
+
+        IconSprites[prefabName] = icon;
+        return icon;
     }
 
     private static void RegisterStatusEffect(ObjectDB objectDB, StatusEffect? statusEffect)

@@ -73,7 +73,7 @@ BottleShips is configured through the normal BepInEx config file. No YAML editin
 
 General options:
 
-* `Quick Cart Hotkey`: client-only hotkey for quickly attaching to or detaching from a nearby cart. Default: `G`. Empty disables the shortcut.
+* `Extended Cart Interaction`: client-only toggle that expands the cart's normal Use interaction to nearby carts without adding a separate hotkey or tooltip. Default: `On`.
 * `Troll Trap Auto Reload Seconds`: automatically rearms `piece_trap_troll` after it triggers. Default: `5`. Range: `0-10`, where `0` disables it.
 * `Ballista Targeting Tweaks`: trophy targets are prioritized, but the ballista can still attack other valid enemies. Players are never selected as targets.
 * `Battering Ram Size`: scales newly placed battering rams. Default: `0.75`. Range: `0.5-1`. Existing placed battering rams are not changed.
@@ -91,7 +91,7 @@ Each bottle section can configure:
 * `Recipe Station`
 * `Recipe Resources`
 
-Synced options are enforced from the server when BottleShips is installed on both server and clients. Client-only options, such as the quick cart hotkey, remain local.
+Synced options are enforced from the server when BottleShips is installed on both server and clients. Client-only options, such as extended cart interaction, remain local.
 
 ### Localization support
 * There should be `BottleShips.English.yml` in plugins folder. Translate it to your language and put it anywhere inside of the Bepinex folder

@@ -109,6 +109,7 @@
     <ItemGroup>
         <Content Include=".gitignore"/>
         <EmbeddedResource Include="assets\bottleasset" />
+        <EmbeddedResource Include="assets\icons\*.rgba" />
         <Content Include="assets\DropAssetBundleInThisFolder.txt"/>
         <Content Include="environment.props"/>
         <Content Include="ILRepack.targets"/>

@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections;
 using System.IO;
-using System.Linq;
 using System.Reflection;
 using BepInEx;
 using BepInEx.Configuration;
@@ -17,7 +16,7 @@ namespace BottleShips
     public class BottleShipsPlugin : BaseUnityPlugin
     {
         internal const string ModName = "BottleShips";
-        internal const string ModVersion = "1.1.0";
+        internal const string ModVersion = "1.1.2";
         internal const string Author = "sighsorry";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
@@ -49,11 +48,11 @@ namespace BottleShips
             
             _serverConfigLocked = config("01 - General", "Lock Configuration", Toggle.On, "If on, the configuration is locked and can be changed by server admins only.", order: 1000);
             _ = ConfigSync.AddLockingConfigEntry(_serverConfigLocked);
-            _quickCartHotkey = config(
+            _extendedCartInteraction = config(
                 "01 - General",
-                "Quick Cart Hotkey",
-                new KeyboardShortcut(KeyCode.G),
-                "Client-only hotkey for attaching to or detaching from a nearby cart. Empty disables quick cart attach.",
+                "Extended Cart Interaction",
+                Toggle.On,
+                "Client-only. If on, the cart's normal Use interaction works from a wider nearby area without adding a separate tooltip.",
                 synchronizedSetting: false,
                 order: 990);
             _trollTrapAutoReloadSeconds = config(
@@ -90,11 +89,6 @@ namespace BottleShips
             Config.Save();
         }
 
-        private void Update()
-        {
-            HandleQuickCartHotkey();
-        }
-
         private void SetupWatcher()
         {
             _watcher = new FileSystemWatcher(Paths.ConfigPath, ConfigFileName);
@@ -126,24 +120,15 @@ namespace BottleShips
         #region ConfigOptions
 
         private static ConfigEntry<Toggle> _serverConfigLocked = null!;
-        private static ConfigEntry<KeyboardShortcut> _quickCartHotkey = null!;
+        private static ConfigEntry<Toggle> _extendedCartInteraction = null!;
         private static ConfigEntry<int> _trollTrapAutoReloadSeconds = null!;
         private static ConfigEntry<Toggle> _ballistaTargetingTweaks = null!;
 
-        internal static bool QuickCartHotkeyEnabled
-        {
-            get
-            {
-                if (_quickCartHotkey == null)
-                {
-                    return false;
-                }
+        internal static bool ExtendedCartInteractionEnabled =>
+            _extendedCartInteraction != null && _extendedCartInteraction.Value == Toggle.On;
 
-                return _quickCartHotkey.Value.MainKey != KeyCode.None;
-            }
-        }
-
-        internal static bool QuickCartAttachWindowActive => Time.time <= _quickCartAttachWindowUntil;
+        internal static bool QuickCartAttachWindowActive =>
+            ExtendedCartInteractionEnabled && Time.time <= _quickCartAttachWindowUntil;
 
         internal static bool BallistaTargetingTweaksEnabled =>
             _ballistaTargetingTweaks != null && _ballistaTargetingTweaks.Value == Toggle.On;
@@ -396,64 +381,15 @@ namespace BottleShips
                    || Utils.GetPrefabName(trap.gameObject) == "piece_trap_troll";
         }
 
-        internal static string QuickCartHotkeyLabel()
+        internal static void OpenQuickCartAttachWindow()
         {
-            if (!QuickCartHotkeyEnabled)
+            if (ExtendedCartInteractionEnabled)
             {
-                return string.Empty;
+                _quickCartAttachWindowUntil = Time.time + QuickCartAttachWindowSeconds;
             }
-
-            KeyboardShortcut shortcut = _quickCartHotkey.Value;
-            string[] parts = shortcut.Modifiers
-                .Select(FormatKeyCode)
-                .Concat(new[] { FormatKeyCode(shortcut.MainKey) })
-                .ToArray();
-
-            return string.Join(" + ", parts);
         }
 
-        private static string FormatKeyCode(KeyCode key)
-        {
-            return key switch
-            {
-                KeyCode.LeftAlt => "LeftAlt",
-                KeyCode.RightAlt => "RightAlt",
-                KeyCode.LeftControl => "LeftCtrl",
-                KeyCode.RightControl => "RightCtrl",
-                KeyCode.LeftShift => "LeftShift",
-                KeyCode.RightShift => "RightShift",
-                _ => key.ToString()
-            };
-        }
-
-        private static void HandleQuickCartHotkey()
-        {
-            if (!QuickCartHotkeyEnabled || !_quickCartHotkey.Value.IsDown())
-            {
-                return;
-            }
-
-            if (!PlayerCanQuickCart() || IsUiBlockingQuickCart())
-            {
-                return;
-            }
-
-            Player player = Player.m_localPlayer;
-            if (player == null)
-            {
-                return;
-            }
-
-            if (!TryGetQuickCart(out Vagon? vagon) || vagon == null)
-            {
-                return;
-            }
-
-            _quickCartAttachWindowUntil = Time.time + QuickCartAttachWindowSeconds;
-            vagon.Interact(player, hold: false, alt: false);
-        }
-
-        private static bool PlayerCanQuickCart()
+        internal static bool PlayerCanQuickCart()
         {
             Player player = Player.m_localPlayer;
             return player != null
@@ -463,7 +399,7 @@ namespace BottleShips
                    && !player.InPlaceMode();
         }
 
-        private static bool IsUiBlockingQuickCart()
+        internal static bool IsUiBlockingQuickCart()
         {
             return InventoryGui.IsVisible()
                    || Menu.IsVisible()
@@ -477,42 +413,7 @@ namespace BottleShips
                    || TextViewer.instance != null && TextViewer.instance.IsVisible();
         }
 
-        private static bool TryGetQuickCart(out Vagon? closestVagon)
-        {
-            closestVagon = null;
-            Player player = Player.m_localPlayer;
-            if (player == null)
-            {
-                return false;
-            }
-
-            Vagon? hoveredVagon = player.m_hovering != null ? player.m_hovering.GetComponentInParent<Vagon>() : null;
-            if (hoveredVagon != null && IsQuickCartCandidate(hoveredVagon, player, out float hoveredDistance)
-                                     && (hoveredDistance <= QuickCartDistance || hoveredVagon.IsAttached(player)))
-            {
-                closestVagon = hoveredVagon;
-                return true;
-            }
-
-            float closestDistance = float.PositiveInfinity;
-            foreach (Vagon vagon in Vagon.m_instances)
-            {
-                if (vagon == null || !IsQuickCartCandidate(vagon, player, out float distance))
-                {
-                    continue;
-                }
-
-                if (distance < closestDistance)
-                {
-                    closestDistance = distance;
-                    closestVagon = vagon;
-                }
-            }
-
-            return closestVagon != null && (closestDistance <= QuickCartDistance || closestVagon.IsAttached(player));
-        }
-
-        private static bool IsQuickCartCandidate(Vagon vagon, Player player, out float distance)
+        internal static bool IsQuickCartCandidate(Vagon vagon, Player player, out float distance)
         {
             distance = float.PositiveInfinity;
             if (vagon.m_attachPoint == null || vagon.transform.up.y < 0.1f)
@@ -527,6 +428,63 @@ namespace BottleShips
 
             distance = Vector3.Distance(player.transform.position + vagon.m_attachOffset, vagon.m_attachPoint.position);
             return true;
+        }
+
+        internal static void HandleExtendedCartUse(Player player, bool hadDoodadController)
+        {
+            if (!ExtendedCartInteractionEnabled || hadDoodadController || player == null)
+            {
+                return;
+            }
+
+            if (!(ZInput.GetButtonDown("Use") || ZInput.GetButtonDown("JoyUse")))
+            {
+                return;
+            }
+
+            if (Hud.InRadial() || player.m_hovering != null || player.m_doodadController != null)
+            {
+                return;
+            }
+
+            if (!PlayerCanQuickCart() || IsUiBlockingQuickCart())
+            {
+                return;
+            }
+
+            if (TryGetNearbyQuickCart(player, out Vagon? vagon) && vagon != null)
+            {
+                OpenQuickCartAttachWindow();
+                vagon.Interact(player, hold: false, alt: false);
+            }
+        }
+
+        private static bool TryGetNearbyQuickCart(Player player, out Vagon? closestVagon)
+        {
+            closestVagon = null;
+            float closestDistance = float.PositiveInfinity;
+
+            foreach (Vagon vagon in Vagon.m_instances)
+            {
+                if (vagon == null || !IsQuickCartCandidate(vagon, player, out float distance))
+                {
+                    continue;
+                }
+
+                if (vagon.IsAttached(player))
+                {
+                    closestVagon = vagon;
+                    return true;
+                }
+
+                if (distance <= QuickCartDistance && distance < closestDistance)
+                {
+                    closestDistance = distance;
+                    closestVagon = vagon;
+                }
+            }
+
+            return closestVagon != null;
         }
 
         internal ConfigEntry<T> config<T>(string group, string name, T value, ConfigDescription description,
@@ -569,18 +527,54 @@ namespace BottleShips
         #endregion
     }
 
-    [HarmonyPatch(typeof(Vagon), nameof(Vagon.GetHoverText))]
-    internal static class BottleShipsVagonGetHoverTextPatch
+    [HarmonyPatch(typeof(Player), nameof(Player.Update))]
+    internal static class BottleShipsPlayerUpdateExtendedCartPatch
     {
-        private static void Postfix(ref string __result)
+        private static bool _hadDoodadController;
+
+        private static void Prefix(Player __instance)
         {
-            string hotkey = BottleShipsPlugin.QuickCartHotkeyLabel();
-            if (string.IsNullOrWhiteSpace(hotkey))
+            if (__instance == Player.m_localPlayer)
+            {
+                _hadDoodadController = __instance.m_doodadController != null;
+            }
+        }
+
+        private static void Postfix(Player __instance)
+        {
+            if (__instance == Player.m_localPlayer)
+            {
+                BottleShipsPlugin.HandleExtendedCartUse(__instance, _hadDoodadController);
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(Vagon), nameof(Vagon.Interact))]
+    internal static class BottleShipsVagonInteractPatch
+    {
+        private static void Prefix(Vagon __instance, Humanoid character, bool hold, bool alt)
+        {
+            if (hold || alt || !BottleShipsPlugin.ExtendedCartInteractionEnabled)
             {
                 return;
             }
 
-            __result += Localization.instance.Localize($"\n[<color=yellow><b>{hotkey}</b></color>] $bottleships_quick_attach_detach");
+            Player player = Player.m_localPlayer;
+            if (player == null || character != player)
+            {
+                return;
+            }
+
+            if (!BottleShipsPlugin.PlayerCanQuickCart() || BottleShipsPlugin.IsUiBlockingQuickCart())
+            {
+                return;
+            }
+
+            if (BottleShipsPlugin.IsQuickCartCandidate(__instance, player, out float distance) &&
+                (distance <= BottleShipsPlugin.QuickCartDistance || __instance.IsAttached(player)))
+            {
+                BottleShipsPlugin.OpenQuickCartAttachWindow();
+            }
         }
     }
 
