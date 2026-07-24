@@ -13,7 +13,7 @@ internal static class BottleShipsManager
 {
     private const string OriginalStationValue = "Original";
     private const string BatteringRamPrefab = "BatteringRam";
-    private static readonly List<BottleTarget> Targets = new()
+    private static readonly BottleTarget[] Targets =
     {
         new("Raft", "Raft", "Raft_bottle", "piece_workbench", false, 45f, 2, true, "piece_workbench", 1, "Wood:20, LeatherScraps:6, Resin:6"),
         new("Karve", "Karve", "Karve_bottle", "piece_workbench", false, 116f, 1, true, "forge", 1, "FineWood:30, DeerHide:10, Resin:20, BronzeNails:80"),
@@ -29,12 +29,16 @@ internal static class BottleShipsManager
     };
 
     private static readonly Dictionary<string, PieceBaseline> PieceBaselines = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly HashSet<string> CreatedRecipes = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, Recipe> OwnedRecipes = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> WarnedMessages = new(StringComparer.OrdinalIgnoreCase);
     private static bool ConfigBound;
-    private static bool BaselinesCaptured;
+    private static ZNetScene? BaselineScene;
+    private static bool ApplyPending;
+    private static bool ApplyWorkerRunning;
+    private static int ApplyNotBeforeFrame;
+    private static uint ApplyRequestVersion;
 
-    internal static IReadOnlyList<string> BottleItemNames => Targets.Select(target => target.BottlePrefab).ToList();
+    internal static IEnumerable<string> BottleItemNames => Targets.Select(target => target.BottlePrefab);
 
     internal static void BindConfig(BottleShipsPlugin plugin)
     {
@@ -43,32 +47,130 @@ internal static class BottleShipsManager
             return;
         }
 
-        for (int index = 0; index < Targets.Count; index++)
+        for (int index = 0; index < Targets.Length; index++)
         {
             BottleTarget target = Targets[index];
             target.Config = BottleConfig.Bind(plugin, target, index + 2);
-            target.Config.AddChangedHandler(() => ApplyIfReady());
+            target.Config.AddChangedHandler(QueueApply);
         }
 
         ConfigBound = true;
     }
 
-    internal static IEnumerator ApplyWhenReady()
+    private static IEnumerator ApplyWhenReady()
     {
-        for (int attempt = 0; attempt < 3600; attempt++)
+        try
         {
-            if (ApplyIfReady())
+            int attempt = 0;
+            uint observedVersion = ApplyRequestVersion;
+            while (attempt < 3600)
+            {
+                yield return null;
+
+                if (!ApplyPending)
+                {
+                    yield break;
+                }
+
+                if (Time.frameCount < ApplyNotBeforeFrame)
+                {
+                    continue;
+                }
+
+                if (observedVersion != ApplyRequestVersion)
+                {
+                    observedVersion = ApplyRequestVersion;
+                    attempt = 0;
+                }
+
+                ++attempt;
+                ApplyPending = false;
+                if (!TryApplyIfReady(out bool applied))
+                {
+                    yield break;
+                }
+
+                if (applied && !ApplyPending)
+                {
+                    yield break;
+                }
+
+                if (!applied)
+                {
+                    ApplyPending = true;
+                }
+            }
+
+            if (observedVersion != ApplyRequestVersion)
             {
                 yield break;
             }
 
-            yield return null;
+            ApplyPending = false;
+            BottleShipsPlugin.BottleShipsLogger.LogDebug("BottleShips could not apply configuration yet because ObjectDB, ZNetScene, or bottle item prefabs were not ready.");
         }
-
-        BottleShipsPlugin.BottleShipsLogger.LogDebug("BottleShips could not apply configuration yet because ObjectDB, ZNetScene, or bottle item prefabs were not ready.");
+        finally
+        {
+            ApplyWorkerRunning = false;
+            if (ApplyPending)
+            {
+                TryStartApplyWorker();
+            }
+        }
     }
 
-    internal static bool ApplyIfReady()
+    private static bool TryApplyIfReady(out bool applied)
+    {
+        try
+        {
+            applied = ApplyIfReady();
+            return true;
+        }
+        catch (Exception exception)
+        {
+            applied = false;
+            BottleShipsPlugin.BottleShipsLogger.LogError(
+                "BottleShips could not apply its configuration. A later config or game-database change will retry.");
+            BottleShipsPlugin.BottleShipsLogger.LogError(exception);
+            return false;
+        }
+    }
+
+    internal static void QueueApply()
+    {
+        ApplyPending = true;
+        ApplyNotBeforeFrame = Time.frameCount + 1;
+        unchecked
+        {
+            ++ApplyRequestVersion;
+        }
+
+        TryStartApplyWorker();
+    }
+
+    private static void TryStartApplyWorker()
+    {
+        if (ApplyWorkerRunning || BottleShipsPlugin.Instance == null)
+        {
+            return;
+        }
+
+        ApplyWorkerRunning = true;
+        try
+        {
+            BottleShipsPlugin.Instance.StartCoroutine(ApplyWhenReady());
+        }
+        catch (Exception exception)
+        {
+            ApplyWorkerRunning = false;
+            ApplyPending = false;
+            BottleShipsPlugin.BottleShipsLogger.LogError(
+                "BottleShips could not start its configuration apply worker.");
+            BottleShipsPlugin.BottleShipsLogger.LogError(exception);
+        }
+    }
+
+    private static bool ApplyIfReady()
     {
         if (!ConfigBound || ObjectDB.instance == null || ZNetScene.instance == null)
         {
@@ -82,14 +184,14 @@ internal static class BottleShipsManager
 
         CaptureBaselinesIfNeeded();
 
+        Piece[] livePieces = Piece.s_allPieces.ToArray();
         foreach (BottleTarget target in Targets)
         {
             ApplyBottleItem(target);
             ApplyBottleRecipe(target);
-            ApplyPiece(target);
+            ApplyPiece(target, livePieces);
         }
 
-        ObjectDB.instance.UpdateRegisters();
         return true;
     }
 
@@ -108,13 +210,21 @@ internal static class BottleShipsManager
 
     private static void CaptureBaselinesIfNeeded()
     {
-        if (BaselinesCaptured)
+        ZNetScene currentScene = ZNetScene.instance;
+        if (BaselineScene != currentScene)
         {
-            return;
+            PieceBaselines.Clear();
+            WarnedMessages.Clear();
+            BaselineScene = currentScene;
         }
 
         foreach (BottleTarget target in Targets)
         {
+            if (PieceBaselines.ContainsKey(target.PiecePrefab))
+            {
+                continue;
+            }
+
             Piece? piece = ResolvePiece(target.PiecePrefab);
             if (piece == null)
             {
@@ -124,8 +234,6 @@ internal static class BottleShipsManager
 
             PieceBaselines[target.PiecePrefab] = PieceBaseline.From(piece);
         }
-
-        BaselinesCaptured = true;
     }
 
     private static void ApplyBottleItem(BottleTarget target)
@@ -150,10 +258,10 @@ internal static class BottleShipsManager
             return;
         }
 
-        string recipeName = GetRecipeName(target.BottlePrefab);
+        string recipeName = "Recipe_" + target.BottlePrefab;
         if (config.BottleRecipeEnabled.Value != BottleShipsPlugin.Toggle.On)
         {
-            RemoveRecipe(recipeName);
+            DisableRecipe(recipeName);
             return;
         }
 
@@ -182,7 +290,12 @@ internal static class BottleShipsManager
             return;
         }
 
-        Recipe recipe = GetOrCreateRecipe(recipeName);
+        Recipe? recipe = GetOrCreateRecipe(recipeName);
+        if (recipe == null)
+        {
+            return;
+        }
+
         recipe.m_item = item;
         recipe.m_amount = 1;
         recipe.m_enabled = true;
@@ -193,7 +306,7 @@ internal static class BottleShipsManager
         recipe.m_resources = requirements;
     }
 
-    private static void ApplyPiece(BottleTarget target)
+    private static void ApplyPiece(BottleTarget target, IReadOnlyList<Piece> livePieces)
     {
         Piece? piece = ResolvePiece(target.PiecePrefab);
         if (piece == null || target.Config == null)
@@ -204,7 +317,7 @@ internal static class BottleShipsManager
         ApplyPieceConfig(target, piece);
         ApplyBatteringRamPrefabSize(target, piece);
 
-        foreach (Piece instance in Piece.s_allPieces.ToArray())
+        foreach (Piece instance in livePieces)
         {
             if (instance == null || !PrefabNameEquals(instance.gameObject, target.PiecePrefab))
             {
@@ -273,7 +386,12 @@ internal static class BottleShipsManager
         string normalized = NormalizePrefabName(value);
         if (string.Equals(normalized, OriginalStationValue, StringComparison.OrdinalIgnoreCase))
         {
-            piece.m_craftingStation = baseline?.CraftingStation;
+            if (baseline == null)
+            {
+                return false;
+            }
+
+            piece.m_craftingStation = baseline.CraftingStation;
             return true;
         }
 
@@ -292,38 +410,47 @@ internal static class BottleShipsManager
         return true;
     }
 
-    private static Recipe GetOrCreateRecipe(string recipeName)
+    private static Recipe? GetOrCreateRecipe(string recipeName)
     {
-        Recipe? existing = ObjectDB.instance.m_recipes.FirstOrDefault(recipe =>
-            recipe != null && string.Equals(recipe.name, recipeName, StringComparison.OrdinalIgnoreCase));
-        if (existing != null)
+        OwnedRecipes.TryGetValue(recipeName, out Recipe? ownedRecipe);
+        if (ownedRecipe == null)
         {
-            CreatedRecipes.Add(recipeName);
-            return existing;
+            OwnedRecipes.Remove(recipeName);
+        }
+
+        Recipe? collision = ObjectDB.instance.m_recipes.FirstOrDefault(recipe =>
+            recipe != null &&
+            recipe != ownedRecipe &&
+            string.Equals(recipe.name, recipeName, StringComparison.OrdinalIgnoreCase));
+        if (collision != null)
+        {
+            WarnOnce(
+                $"Could not create recipe '{recipeName}': another recipe with the same name is already registered.");
+            return null;
+        }
+
+        if (ownedRecipe != null)
+        {
+            if (!ObjectDB.instance.m_recipes.Contains(ownedRecipe))
+            {
+                ObjectDB.instance.m_recipes.Add(ownedRecipe);
+            }
+
+            return ownedRecipe;
         }
 
         Recipe recipe = ScriptableObject.CreateInstance<Recipe>();
         recipe.name = recipeName;
         ObjectDB.instance.m_recipes.Add(recipe);
-        CreatedRecipes.Add(recipeName);
+        OwnedRecipes[recipeName] = recipe;
         return recipe;
     }
 
-    private static void RemoveRecipe(string recipeName)
+    private static void DisableRecipe(string recipeName)
     {
-        for (int index = ObjectDB.instance.m_recipes.Count - 1; index >= 0; index--)
+        if (OwnedRecipes.TryGetValue(recipeName, out Recipe? recipe) && recipe != null)
         {
-            Recipe recipe = ObjectDB.instance.m_recipes[index];
-            if (recipe == null || !string.Equals(recipe.name, recipeName, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            ObjectDB.instance.m_recipes.RemoveAt(index);
-            if (CreatedRecipes.Contains(recipeName))
-            {
-                UnityEngine.Object.Destroy(recipe);
-            }
+            recipe.m_enabled = false;
         }
     }
 
@@ -341,7 +468,7 @@ internal static class BottleShipsManager
             }
 
             string[] parts = token.Split(':');
-            if (parts.Length < 2)
+            if (parts.Length is < 2 or > 4)
             {
                 return false;
             }
@@ -482,11 +609,6 @@ internal static class BottleShipsManager
             .ToArray();
     }
 
-    private static string GetRecipeName(string itemName)
-    {
-        return "Recipe_" + itemName;
-    }
-
     private static bool PrefabNameEquals(GameObject gameObject, string prefabName)
     {
         return string.Equals(Utils.GetPrefabName(gameObject), prefabName, StringComparison.OrdinalIgnoreCase);
@@ -517,7 +639,6 @@ internal static class BottleShipsManager
     {
         return string.IsNullOrWhiteSpace(value) ||
                value.Equals("None", StringComparison.OrdinalIgnoreCase) ||
-               value.Equals("none", StringComparison.OrdinalIgnoreCase) ||
                value.Equals("null", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -527,6 +648,20 @@ internal static class BottleShipsManager
         {
             BottleShipsPlugin.BottleShipsLogger.LogWarning(message);
         }
+    }
+
+    private static string GetTransformPath(Transform root, Transform transform)
+    {
+        List<string> parts = new();
+        Transform? current = transform;
+        while (current != null && current != root)
+        {
+            parts.Add(current.name);
+            current = current.parent;
+        }
+
+        parts.Reverse();
+        return string.Join("/", parts);
     }
 
     private sealed class BottleTarget
@@ -768,19 +903,6 @@ internal static class BottleShipsManager
             _siegeMachine?.Apply(gameObject.GetComponent<SiegeMachine>(), size);
         }
 
-        private static string GetTransformPath(Transform root, Transform transform)
-        {
-            List<string> parts = new();
-            Transform? current = transform;
-            while (current != null && current != root)
-            {
-                parts.Add(current.name);
-                current = current.parent;
-            }
-
-            parts.Reverse();
-            return string.Join("/", parts);
-        }
     }
 
     private sealed class ChildTransformSnapshot
@@ -809,7 +931,7 @@ internal static class BottleShipsManager
 
         internal JointSnapshot(Transform root, ConfigurableJoint joint)
         {
-            _path = GetPath(root, joint.transform);
+            _path = GetTransformPath(root, joint.transform);
             _anchor = joint.anchor;
             _connectedAnchor = joint.connectedAnchor;
         }
@@ -826,19 +948,6 @@ internal static class BottleShipsManager
             joint.connectedAnchor = _connectedAnchor * size;
         }
 
-        private static string GetPath(Transform root, Transform transform)
-        {
-            List<string> parts = new();
-            Transform? current = transform;
-            while (current != null && current != root)
-            {
-                parts.Add(current.name);
-                current = current.parent;
-            }
-
-            parts.Reverse();
-            return string.Join("/", parts);
-        }
     }
 
     private sealed class VagonSnapshot
@@ -894,7 +1003,7 @@ internal static class BottleShipsObjectDbAwakePatch
     [HarmonyPriority(Priority.Last)]
     private static void Postfix()
     {
-        BottleShipsManager.ApplyIfReady();
+        BottleShipsManager.QueueApply();
     }
 }
 
@@ -904,6 +1013,6 @@ internal static class BottleShipsZNetSceneAwakePatch
     [HarmonyPriority(Priority.Last)]
     private static void Postfix()
     {
-        BottleShipsManager.ApplyIfReady();
+        BottleShipsManager.QueueApply();
     }
 }

@@ -2,6 +2,8 @@
 
 BottleShips adds 11 bottle items, each containing a ship, cart, battering ram, catapult, portal, trap, or ballista. Use a bottle as the build resource and place the full-size piece when you need it.
 
+BottleShips must be installed on the server and every connecting client because it adds synchronized network prefabs and gameplay settings.
+
 ![](https://i.ibb.co/N2Bw4btD/Screenshot-2025-08-27-121337.png)
 
 * Each bottle is tied to the matching piece.
@@ -77,6 +79,18 @@ General options:
 * `Troll Trap Auto Reload Seconds`: automatically rearms `piece_trap_troll` after it triggers. Default: `5`. Range: `0-10`, where `0` disables it.
 * `Ballista Targeting Tweaks`: trophy targets are prioritized, but the ballista can still attack other valid enemies. Players are never selected as targets.
 * `Battering Ram Size`: scales newly placed battering rams. Default: `0.75`. Range: `0.5-1`. Existing placed battering rams are not changed.
+
+Ship tweak options:
+
+* `Scope`: affects the four supported vanilla ships by default, or every `Ship` component when set to `AllShips`.
+* `Camera Max Distance`: absolute maximum camera zoom distance while controlling, standing on, or inside an affected ship. Default: `6`, the vanilla value. Client-only.
+* `Explore Radius Multiplier`: multiplies minimap exploration radius while aboard an affected ship. Default: `1`.
+* `Sailing Force Multiplier`: changes wind-driven force at Half or Full sail. Default: `1`.
+* `Paddling Force Multiplier`: changes manual forward and reverse paddling at Slow or Back. Default: `1`.
+* `Steering Multiplier`: changes speed-based sailing steering and Slow/Back paddle steering. Default: `1`.
+* `Paddling Bonus Per Passenger`: adds paddling propulsion and paddle-steering force for each other player aboard. Default: `0`.
+
+BottleShips disables its ship tweaks when RockTheBoat is installed to avoid applying the same camera, minimap, and ship physics changes twice.
 
 Each bottle section can configure:
 

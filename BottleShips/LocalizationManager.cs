@@ -1,218 +1,287 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Text;
 using BepInEx;
-using BepInEx.Bootstrap;
-using BepInEx.Configuration;
+using BottleShips;
 using HarmonyLib;
-using JetBrains.Annotations;
-using UnityEngine;
 using YamlDotNet.Serialization;
 
 namespace LocalizationManager;
 
-[PublicAPI]
-public class Localizer
+internal static class Localizer
 {
-    private static readonly Dictionary<string, Dictionary<string, Func<string>>> PlaceholderProcessors = new();
+    private const string DefaultLanguage = "English";
+    private const string TranslationExtension = ".yml";
 
-    private static readonly Dictionary<string, Dictionary<string, string>> loadedTexts = new();
+    private static readonly IDeserializer Deserializer =
+        new DeserializerBuilder().IgnoreFields().Build();
 
-    private static readonly ConditionalWeakTable<Localization, string> localizationLanguage = new();
+    private static BottleShipsPlugin? _plugin;
+    private static IReadOnlyDictionary<string, string> _externalTranslations =
+        new Dictionary<string, string>();
 
-    private static readonly List<WeakReference<Localization>> localizationObjects = new();
-
-    private static BaseUnityPlugin? _plugin;
-
-    private static BaseUnityPlugin plugin
+    internal static void Load(BottleShipsPlugin plugin)
     {
-        get
+        _plugin = plugin ?? throw new ArgumentNullException(nameof(plugin));
+        _externalTranslations = FindExternalTranslations();
+    }
+
+    internal static void LoadSelectedLanguage()
+    {
+        Localization? localization = Localization.instance;
+        if (localization is null)
         {
-            if (_plugin is null)
-            {
-                IEnumerable<TypeInfo> types;
-                try
-                {
-                    types = Assembly.GetExecutingAssembly().DefinedTypes.ToList();
-                }
-                catch (ReflectionTypeLoadException e)
-                {
-                    types = e.Types.Where(t => t != null).Select(t => t.GetTypeInfo());
-                }
+            BottleShipsPlugin.BottleShipsLogger.LogWarning(
+                "Could not load BottleShips translations because Localization.instance is not ready.");
+            return;
+        }
 
-                _plugin = (BaseUnityPlugin)Chainloader.ManagerObject.GetComponent(types.First(t => t.IsClass && typeof(BaseUnityPlugin).IsAssignableFrom(t)));
-            }
+        LoadLocalization(localization, localization.GetSelectedLanguage());
+    }
 
-            return _plugin;
+    internal static void LoadLocalization(Localization localization, string language)
+    {
+        if (_plugin is null)
+        {
+            return;
+        }
+
+        Dictionary<string, string> texts = new(StringComparer.Ordinal);
+        if (!TryMergeEmbeddedTranslation(texts, DefaultLanguage, required: true))
+        {
+            return;
+        }
+
+        TryMergeExternalTranslation(texts, _externalTranslations, DefaultLanguage);
+
+        if (!string.Equals(language, DefaultLanguage, StringComparison.OrdinalIgnoreCase))
+        {
+            TryMergeEmbeddedTranslation(texts, language, required: false);
+            TryMergeExternalTranslation(texts, _externalTranslations, language);
+        }
+
+        foreach (KeyValuePair<string, string> translation in texts)
+        {
+            localization.AddWord(translation.Key, translation.Value);
         }
     }
 
-    private static readonly List<string> fileExtensions = new() { ".json", ".yml" };
-
-    private static void UpdatePlaceholderText(Localization localization, string key)
+    private static Dictionary<string, string> FindExternalTranslations()
     {
-        localizationLanguage.TryGetValue(localization, out string language);
-        string text = loadedTexts[language][key];
-        if (PlaceholderProcessors.TryGetValue(key, out Dictionary<string, Func<string>> textProcessors))
+        Dictionary<string, string> translations = new(StringComparer.OrdinalIgnoreCase);
+        string pluginName = _plugin!.Info.Metadata.Name;
+        string? bepInExRoot = Path.GetDirectoryName(Paths.PluginPath);
+        if (string.IsNullOrEmpty(bepInExRoot))
         {
-            text = textProcessors.Aggregate(text, (current, kv) => current.Replace("{" + kv.Key + "}", kv.Value()));
+            BottleShipsPlugin.BottleShipsLogger.LogWarning(
+                "Could not locate the BepInEx directory. External BottleShips translations will be skipped.");
+            return translations;
         }
 
-        localization.AddWord(key, text);
+        string[] candidates;
+        try
+        {
+            candidates = Directory
+                .GetFiles(bepInExRoot, $"{pluginName}*{TranslationExtension}", SearchOption.AllDirectories)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(path => path, StringComparer.Ordinal)
+                .ToArray();
+        }
+        catch (Exception exception)
+        {
+            BottleShipsPlugin.BottleShipsLogger.LogWarning(
+                $"Could not scan for external BottleShips translations: {exception.Message}");
+            return translations;
+        }
+
+        foreach (string candidate in candidates)
+        {
+            if (!TryGetLanguageFromFileName(candidate, pluginName, out string language))
+            {
+                BottleShipsPlugin.BottleShipsLogger.LogWarning(
+                    $"Skipping external translation with an invalid file name: {candidate}. " +
+                    $"Expected {pluginName}.<Language>{TranslationExtension}.");
+                continue;
+            }
+
+            if (translations.TryGetValue(language, out string? existing))
+            {
+                BottleShipsPlugin.BottleShipsLogger.LogWarning(
+                    $"Multiple external BottleShips translations were found for {language}. " +
+                    $"Using {existing} and skipping {candidate}.");
+                continue;
+            }
+
+            translations[language] = candidate;
+        }
+
+        return translations;
     }
 
-    public static void AddPlaceholder<T>(string key, string placeholder, ConfigEntry<T> config, Func<T, string>? convertConfigValue = null) where T : notnull
+    private static bool TryGetLanguageFromFileName(string path, string pluginName, out string language)
     {
-        convertConfigValue ??= val => val.ToString();
-        if (!PlaceholderProcessors.ContainsKey(key))
+        string fileName = Path.GetFileName(path);
+        string prefix = pluginName + ".";
+
+        language = string.Empty;
+        if (!fileName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+            !fileName.EndsWith(TranslationExtension, StringComparison.OrdinalIgnoreCase))
         {
-            PlaceholderProcessors[key] = new Dictionary<string, Func<string>>();
+            return false;
         }
 
-        void UpdatePlaceholder()
+        language = fileName.Substring(
+            prefix.Length,
+            fileName.Length - prefix.Length - TranslationExtension.Length);
+
+        return !string.IsNullOrWhiteSpace(language) &&
+               language.IndexOf('.') < 0 &&
+               string.Equals(language, language.Trim(), StringComparison.Ordinal);
+    }
+
+    private static bool TryMergeEmbeddedTranslation(
+        IDictionary<string, string> destination,
+        string language,
+        bool required)
+    {
+        byte[]? data = ReadEmbeddedTranslation(language);
+        if (data is null)
         {
-            PlaceholderProcessors[key][placeholder] = () => convertConfigValue(config.Value);
-            UpdatePlaceholderText(Localization.instance, key);
+            if (required)
+            {
+                BottleShipsPlugin.BottleShipsLogger.LogError(
+                    $"BottleShips has no embedded {language} translation. " +
+                    $"Expected translations/{language}{TranslationExtension}.");
+            }
+
+            return false;
         }
 
-        config.SettingChanged += (_, _) => UpdatePlaceholder();
-        if (loadedTexts.ContainsKey(Localization.instance.GetSelectedLanguage()))
+        return TryMergeYaml(
+            destination,
+            Encoding.UTF8.GetString(data),
+            $"embedded {language} translation",
+            required);
+    }
+
+    private static void TryMergeExternalTranslation(
+        IDictionary<string, string> destination,
+        IReadOnlyDictionary<string, string> externalFiles,
+        string language)
+    {
+        if (!externalFiles.TryGetValue(language, out string? path))
         {
-            UpdatePlaceholder();
+            return;
+        }
+
+        string yaml;
+        try
+        {
+            yaml = File.ReadAllText(path);
+        }
+        catch (Exception exception)
+        {
+            BottleShipsPlugin.BottleShipsLogger.LogWarning(
+                $"Could not read external BottleShips translation {path}; " +
+                $"the previous translation layer will be used. {exception.Message}");
+            return;
+        }
+
+        TryMergeYaml(destination, yaml, $"external translation {path}", required: false);
+    }
+
+    private static bool TryMergeYaml(
+        IDictionary<string, string> destination,
+        string yaml,
+        string source,
+        bool required)
+    {
+        try
+        {
+            Dictionary<string, string>? translations =
+                Deserializer.Deserialize<Dictionary<string, string>?>(yaml);
+
+            if (translations is null || translations.Count == 0)
+            {
+                LogProblem(required,
+                    $"BottleShips {source} is empty; " +
+                    $"{(required ? "translations cannot be loaded" : "the previous translation layer will be used")}.");
+                return false;
+            }
+
+            foreach (KeyValuePair<string, string> translation in translations)
+            {
+                destination[translation.Key] = translation.Value;
+            }
+
+            return true;
+        }
+        catch (Exception exception)
+        {
+            LogProblem(required,
+                $"Could not parse BottleShips {source}; " +
+                $"{(required ? "translations cannot be loaded" : "the previous translation layer will be used")}. " +
+                exception.Message);
+            return false;
         }
     }
 
-    public static void AddText(string key, string text)
+    private static byte[]? ReadEmbeddedTranslation(string language)
     {
-        List<WeakReference<Localization>> remove = new();
-        foreach (WeakReference<Localization> reference in localizationObjects)
+        Assembly assembly = typeof(Localizer).Assembly;
+        string resourceSuffix = $"translations.{language}{TranslationExtension}";
+        string? resourceName = assembly
+            .GetManifestResourceNames()
+            .FirstOrDefault(name => name.EndsWith(resourceSuffix, StringComparison.Ordinal));
+
+        if (resourceName is null)
         {
-            if (reference.TryGetTarget(out Localization localization))
-            {
-                Dictionary<string, string> texts = loadedTexts[localizationLanguage.GetOrCreateValue(localization)];
-                if (!localization.m_translations.ContainsKey(key))
-                {
-                    texts[key] = text;
-                    localization.AddWord(key, text);
-                }
-            }
-            else
-            {
-                remove.Add(reference);
-            }
+            return null;
         }
 
-        foreach (WeakReference<Localization> reference in remove)
+        using Stream? resource = assembly.GetManifestResourceStream(resourceName);
+        if (resource is null)
         {
-            localizationObjects.Remove(reference);
+            return null;
         }
+
+        using MemoryStream data = new();
+        resource.CopyTo(data);
+        return data.Length == 0 ? null : data.ToArray();
     }
 
-    public static void Load() => _ = plugin;
-    
-    public static void LoadLocalizationLater(Localization __instance) => LoadLocalization(Localization.instance, __instance.GetSelectedLanguage());
-
-    private static void LoadLocalization(Localization __instance, string language)
+    private static void LogProblem(bool error, string message)
     {
-        if (!localizationLanguage.Remove(__instance))
+        if (error)
         {
-            localizationObjects.Add(new WeakReference<Localization>(__instance));
+            BottleShipsPlugin.BottleShipsLogger.LogError(message);
         }
-
-        localizationLanguage.Add(__instance, language);
-
-        Dictionary<string, string> localizationFiles = new();
-        foreach (string file in Directory.GetFiles(Path.GetDirectoryName(Paths.PluginPath)!, $"{plugin.Info.Metadata.Name}.*", SearchOption.AllDirectories).Where(f => fileExtensions.IndexOf(Path.GetExtension(f)) >= 0))
+        else
         {
-            string key = Path.GetFileNameWithoutExtension(file).Split('.')[1];
-            if (localizationFiles.ContainsKey(key))
-            {
-                // Handle duplicate key
-                Debug.LogWarning($"Duplicate key {key} found for {plugin.Info.Metadata.Name}. The duplicate file found at {file} will be skipped.");
-            }
-            else
-            {
-                localizationFiles[key] = file;
-            }
-        }
-
-        if (LoadTranslationFromAssembly("English") is not { } englishAssemblyData)
-        {
-            throw new Exception($"Found no English localizations in mod {plugin.Info.Metadata.Name}. Expected an embedded resource translations/English.json or translations/English.yml.");
-        }
-
-        Dictionary<string, string>? localizationTexts = new DeserializerBuilder().IgnoreFields().Build().Deserialize<Dictionary<string, string>?>(Encoding.UTF8.GetString(englishAssemblyData));
-        if (localizationTexts is null)
-        {
-            throw new Exception($"Localization for mod {plugin.Info.Metadata.Name} failed: Localization file was empty.");
-        }
-
-        string? localizationData = null;
-        if (language != "English")
-        {
-            if (localizationFiles.TryGetValue(language, out string? localizationFile))
-            {
-                localizationData = File.ReadAllText(localizationFile);
-            }
-            else if (LoadTranslationFromAssembly(language) is { } languageAssemblyData)
-            {
-                localizationData = Encoding.UTF8.GetString(languageAssemblyData);
-            }
-        }
-
-        if (localizationData is null && localizationFiles.TryGetValue("English", out string? localizationFile1))
-        {
-            localizationData = File.ReadAllText(localizationFile1);
-        }
-
-        if (localizationData is not null)
-        {
-            foreach (KeyValuePair<string, string> kv in new DeserializerBuilder().IgnoreFields().Build().Deserialize<Dictionary<string, string>?>(localizationData) ?? new Dictionary<string, string>())
-            {
-                localizationTexts[kv.Key] = kv.Value;
-            }
-        }
-
-        loadedTexts[language] = localizationTexts;
-        foreach (KeyValuePair<string, string> s in localizationTexts)
-        {
-            UpdatePlaceholderText(__instance, s.Key);
+            BottleShipsPlugin.BottleShipsLogger.LogWarning(message);
         }
     }
+}
 
-    static Localizer()
+[HarmonyPatch(typeof(Localization), nameof(Localization.SetupLanguage))]
+internal static class LocalizationSetupLanguagePatch
+{
+    [HarmonyPostfix]
+    private static void Postfix(Localization __instance, string language)
     {
-        Harmony harmony = new("org.bepinex.helpers.LocalizationManager");
-        harmony.Patch(AccessTools.DeclaredMethod(typeof(Localization), nameof(Localization.SetupLanguage)), postfix: new HarmonyMethod(AccessTools.DeclaredMethod(typeof(Localizer), nameof(LoadLocalization))));
-        harmony.Patch(AccessTools.DeclaredMethod(typeof(FejdStartup), nameof(FejdStartup.SetupGui)), postfix: new HarmonyMethod(AccessTools.DeclaredMethod(typeof(Localizer), nameof(LoadLocalizationLater))));
+        Localizer.LoadLocalization(__instance, language);
     }
+}
 
-    private static byte[]? LoadTranslationFromAssembly(string language)
+[HarmonyPatch(typeof(FejdStartup), nameof(FejdStartup.SetupGui))]
+internal static class FejdStartupSetupGuiPatch
+{
+    [HarmonyPostfix]
+    private static void Postfix()
     {
-        foreach (string extension in fileExtensions)
-        {
-            if (ReadEmbeddedFileBytes("translations." + language + extension) is { } data)
-            {
-                return data;
-            }
-        }
-
-        return null;
-    }
-
-    public static byte[]? ReadEmbeddedFileBytes(string resourceFileName, Assembly? containingAssembly = null)
-    {
-        using MemoryStream stream = new();
-        containingAssembly ??= Assembly.GetCallingAssembly();
-        if (containingAssembly.GetManifestResourceNames().FirstOrDefault(str => str.EndsWith(resourceFileName, StringComparison.Ordinal)) is { } name)
-        {
-            containingAssembly.GetManifestResourceStream(name)?.CopyTo(stream);
-        }
-
-        return stream.Length == 0 ? null : stream.ToArray();
+        Localizer.LoadSelectedLanguage();
     }
 }

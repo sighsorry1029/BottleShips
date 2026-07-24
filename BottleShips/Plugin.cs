@@ -1,5 +1,5 @@
 ﻿using System;
-using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using BepInEx;
@@ -16,7 +16,7 @@ namespace BottleShips
     public class BottleShipsPlugin : BaseUnityPlugin
     {
         internal const string ModName = "BottleShips";
-        internal const string ModVersion = "1.1.2";
+        internal const string ModVersion = "1.1.4";
         internal const string Author = "sighsorry";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
@@ -27,13 +27,19 @@ namespace BottleShips
         private readonly Harmony _harmony = new(ModGUID);
         private FileSystemWatcher? _watcher;
         internal static BottleShipsPlugin Instance = null!;
-        private static float _quickCartAttachWindowUntil;
+        private static Vagon? _quickCartAttachWindowTarget;
+        private static float _quickCartAttachWindowUntil = float.NegativeInfinity;
 
         public static readonly ManualLogSource BottleShipsLogger =
             BepInEx.Logging.Logger.CreateLogSource(ModName);
 
         private static readonly ConfigSync ConfigSync = new(ModGUID)
-            { DisplayName = ModName, CurrentVersion = ModVersion, MinimumRequiredVersion = ModVersion };
+        {
+            DisplayName = ModName,
+            CurrentVersion = ModVersion,
+            MinimumRequiredVersion = ModVersion,
+            ModRequired = true
+        };
 
         public enum Toggle
         {
@@ -44,7 +50,7 @@ namespace BottleShips
         public void Awake()
         {
             Instance = this;
-            Localizer.Load();
+            Localizer.Load(this);
             
             _serverConfigLocked = config("01 - General", "Lock Configuration", Toggle.On, "If on, the configuration is locked and can be changed by server admins only.", order: 1000);
             _ = ConfigSync.AddLockingConfigEntry(_serverConfigLocked);
@@ -76,16 +82,29 @@ namespace BottleShips
             }
 
             BottleShipsManager.BindConfig(this);
+            ShipTweaksManager.BindConfig(this);
 
             Assembly assembly = Assembly.GetExecutingAssembly();
             _harmony.PatchAll(assembly);
-            StartCoroutine(BottleShipsManager.ApplyWhenReady());
+            BottleShipsManager.QueueApply();
             SetupWatcher();
         }
 
         private void OnDestroy()
         {
-            _watcher?.Dispose();
+            if (_watcher != null)
+            {
+                _watcher.EnableRaisingEvents = false;
+                _watcher.Changed -= ReadConfigValues;
+                _watcher.Created -= ReadConfigValues;
+                _watcher.Renamed -= ReadConfigValues;
+                _watcher.Dispose();
+                _watcher = null;
+            }
+
+            _harmony.UnpatchSelf();
+            _quickCartAttachWindowTarget = null;
+            _quickCartAttachWindowUntil = float.NegativeInfinity;
             Config.Save();
         }
 
@@ -95,7 +114,6 @@ namespace BottleShips
             _watcher.Changed += ReadConfigValues;
             _watcher.Created += ReadConfigValues;
             _watcher.Renamed += ReadConfigValues;
-            _watcher.IncludeSubdirectories = true;
             _watcher.SynchronizingObject = ThreadingHelper.SynchronizingObject;
             _watcher.EnableRaisingEvents = true;
         }
@@ -107,12 +125,12 @@ namespace BottleShips
             {
                 BottleShipsLogger.LogDebug("ReadConfigValues called");
                 Config.Reload();
-                BottleShipsManager.ApplyIfReady();
             }
-            catch
+            catch (Exception exception)
             {
                 BottleShipsLogger.LogError($"There was an issue loading your {ConfigFileName}");
                 BottleShipsLogger.LogError("Please check your config entries for spelling and format!");
+                BottleShipsLogger.LogError(exception);
             }
         }
 
@@ -127,147 +145,8 @@ namespace BottleShips
         internal static bool ExtendedCartInteractionEnabled =>
             _extendedCartInteraction != null && _extendedCartInteraction.Value == Toggle.On;
 
-        internal static bool QuickCartAttachWindowActive =>
-            ExtendedCartInteractionEnabled && Time.time <= _quickCartAttachWindowUntil;
-
         internal static bool BallistaTargetingTweaksEnabled =>
             _ballistaTargetingTweaks != null && _ballistaTargetingTweaks.Value == Toggle.On;
-
-        internal static void UpdateBallistaTarget(Turret turret, float dt)
-        {
-            if (turret == null || turret.m_nview == null || !turret.m_nview.IsValid())
-            {
-                return;
-            }
-
-            if (!turret.HasAmmo())
-            {
-                if (turret.m_haveTarget)
-                {
-                    turret.m_nview.InvokeRPC(ZNetView.Everybody, "RPC_SetTarget", ZDOID.None);
-                }
-
-                return;
-            }
-
-            turret.m_updateTargetTimer -= dt;
-            if (turret.m_updateTargetTimer <= 0f)
-            {
-                turret.m_updateTargetTimer = Character.IsCharacterInRange(turret.transform.position, 40f)
-                    ? turret.m_updateTargetIntervalNear
-                    : turret.m_updateTargetIntervalFar;
-
-                Character? target = FindBallistaTarget(turret);
-                if (target != turret.m_target)
-                {
-                    if (target != null)
-                    {
-                        turret.m_newTargetEffect.Create(turret.transform.position, turret.transform.rotation);
-                    }
-                    else
-                    {
-                        turret.m_lostTargetEffect.Create(turret.transform.position, turret.transform.rotation);
-                    }
-
-                    turret.m_nview.InvokeRPC(ZNetView.Everybody, "RPC_SetTarget",
-                        target != null ? target.GetZDOID() : ZDOID.None);
-                }
-            }
-
-            if (turret.m_haveTarget && (turret.m_target == null || turret.m_target.IsDead() || turret.m_target.IsPlayer()))
-            {
-                turret.m_nview.InvokeRPC(ZNetView.Everybody, "RPC_SetTarget", ZDOID.None);
-                turret.m_lostTargetEffect.Create(turret.transform.position, turret.transform.rotation);
-            }
-        }
-
-        private static Character? FindBallistaTarget(Turret turret)
-        {
-            if (!turret.m_targetEnemies)
-            {
-                return null;
-            }
-
-            bool includeTamed = turret.m_targetItems.Count > 0 ? turret.m_targetTamedConfig : turret.m_targetTamed;
-            Character? preferredTarget = null;
-            Character? fallbackTarget = null;
-            float preferredDistance = float.PositiveInfinity;
-            float fallbackDistance = float.PositiveInfinity;
-
-            foreach (Character candidate in Character.GetAllCharacters())
-            {
-                if (!IsValidBallistaTargetCandidate(turret, candidate, includeTamed))
-                {
-                    continue;
-                }
-
-                float distance = Vector3.Distance(candidate.transform.position, turret.transform.position);
-                if (MatchesBallistaTrophyTarget(turret, candidate))
-                {
-                    if (distance < preferredDistance)
-                    {
-                        preferredDistance = distance;
-                        preferredTarget = candidate;
-                    }
-                }
-                else if (distance < fallbackDistance)
-                {
-                    fallbackDistance = distance;
-                    fallbackTarget = candidate;
-                }
-            }
-
-            return preferredTarget != null ? preferredTarget : fallbackTarget;
-        }
-
-        private static bool IsValidBallistaTargetCandidate(Turret turret, Character candidate, bool includeTamed)
-        {
-            if (candidate == null || candidate.IsPlayer() || candidate.IsDead() || candidate.m_aiSkipTarget)
-            {
-                return false;
-            }
-
-            if (!includeTamed && candidate.IsTamed())
-            {
-                return false;
-            }
-
-            BaseAI baseAI = candidate.GetBaseAI();
-            if (baseAI != null && baseAI.IsSleeping())
-            {
-                return false;
-            }
-
-            return BaseAI.CanSenseTarget(
-                turret.transform,
-                turret.m_eye.transform.position,
-                0f,
-                turret.m_viewDistance,
-                turret.m_horizontalAngle,
-                alerted: false,
-                mistVision: false,
-                candidate,
-                passiveAggresive: true,
-                isTamed: false);
-        }
-
-        private static bool MatchesBallistaTrophyTarget(Turret turret, Character candidate)
-        {
-            if (turret.m_targetCharacters.Count == 0)
-            {
-                return false;
-            }
-
-            foreach (Character target in turret.m_targetCharacters)
-            {
-                if (target != null && candidate.m_name == target.m_name)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
 
         internal static void RejectBallistaPlayerTarget(ref ZDOID character)
         {
@@ -283,41 +162,13 @@ namespace BottleShips
             }
         }
 
-        internal static void ScheduleTrollTrapAutoReload(Trap trap)
+        internal static void TryAutoReloadTrollTrap(Trap trap)
         {
-            if (_trollTrapAutoReloadSeconds == null || _trollTrapAutoReloadSeconds.Value <= 0)
-            {
-                return;
-            }
-
-            if (!IsTrollTrap(trap))
-            {
-                return;
-            }
-
-            trap.StartCoroutine(AutoReloadTrollTrapAfterDelay(trap, _trollTrapAutoReloadSeconds.Value));
-        }
-
-        private static IEnumerator AutoReloadTrollTrapAfterDelay(Trap trap, int seconds)
-        {
-            yield return new WaitForSeconds(seconds);
-
-            TryRequestTrollTrapAutoReload(trap);
-        }
-
-        internal static void TryAutoReloadTrollTrapFallback(Trap trap)
-        {
-            if (_trollTrapAutoReloadSeconds == null || _trollTrapAutoReloadSeconds.Value <= 0)
-            {
-                return;
-            }
-
-            TryRequestTrollTrapAutoReload(trap);
-        }
-
-        private static void TryRequestTrollTrapAutoReload(Trap trap)
-        {
-            if (trap == null || trap.m_nview == null || !trap.m_nview.IsValid())
+            if (_trollTrapAutoReloadSeconds == null
+                || _trollTrapAutoReloadSeconds.Value <= 0
+                || trap == null
+                || trap.m_nview == null
+                || !trap.m_nview.IsValid())
             {
                 return;
             }
@@ -342,12 +193,7 @@ namespace BottleShips
                 return;
             }
 
-            if (trap.IsCoolingDown())
-            {
-                return;
-            }
-
-            double triggeredAt = GetTrapTriggeredAt(trap);
+            double triggeredAt = trap.m_nview.GetZDO().GetFloat(ZDOVars.s_triggered);
             if (triggeredAt <= 0)
             {
                 return;
@@ -363,35 +209,71 @@ namespace BottleShips
             trap.RequestStateChange(Trap.TrapState.Armed);
         }
 
-        private static double GetTrapTriggeredAt(Trap trap)
-        {
-            return trap.m_nview != null && trap.m_nview.IsValid()
-                ? trap.m_nview.GetZDO().GetFloat(ZDOVars.s_triggered)
-                : 0;
-        }
-
         private static bool IsTrollTrap(Trap trap)
         {
-            if (trap == null || trap.m_nview == null || !trap.m_nview.IsValid())
-            {
-                return false;
-            }
-
             return trap.m_nview.GetPrefabName() == "piece_trap_troll"
                    || Utils.GetPrefabName(trap.gameObject) == "piece_trap_troll";
         }
 
-        internal static void OpenQuickCartAttachWindow()
+        internal static bool TryApplyExtendedCartDistance(Vagon vagon, out QuickCartDistanceState state)
         {
-            if (ExtendedCartInteractionEnabled)
+            state = default;
+            Player player = Player.m_localPlayer;
+            if (!ExtendedCartInteractionEnabled
+                || player == null
+                || vagon == null
+                || Utils.GetPrefabName(vagon.gameObject) != "Cart"
+                || vagon.m_nview == null
+                || !vagon.m_nview.IsValid()
+                || !vagon.m_nview.IsOwner())
             {
+                return false;
+            }
+
+            bool requestPending = vagon.m_useRequester == player;
+            bool settling = _quickCartAttachWindowTarget == vagon
+                            && Time.time <= _quickCartAttachWindowUntil
+                            && vagon.IsAttached(player);
+            if (!requestPending && !settling)
+            {
+                if (_quickCartAttachWindowTarget == vagon && Time.time > _quickCartAttachWindowUntil)
+                {
+                    _quickCartAttachWindowTarget = null;
+                }
+
+                return false;
+            }
+
+            if (requestPending &&
+                (!IsQuickCartCandidate(vagon, player, out float distance) || distance > QuickCartDistance))
+            {
+                return false;
+            }
+
+            if (requestPending)
+            {
+                _quickCartAttachWindowTarget = vagon;
                 _quickCartAttachWindowUntil = Time.time + QuickCartAttachWindowSeconds;
             }
+
+            state = new QuickCartDistanceState(vagon.m_detachDistance);
+            vagon.m_detachDistance = Mathf.Max(vagon.m_detachDistance, QuickCartDistance);
+            return true;
         }
 
-        internal static bool PlayerCanQuickCart()
+        internal static void RestoreExtendedCartDistance(Vagon vagon, ref QuickCartDistanceState state)
         {
-            Player player = Player.m_localPlayer;
+            if (!state.Active)
+            {
+                return;
+            }
+
+            vagon.m_detachDistance = state.DetachDistance;
+            state.Active = false;
+        }
+
+        internal static bool PlayerCanQuickCart(Player player)
+        {
             return player != null
                    && !player.IsDead()
                    && !player.IsTeleporting()
@@ -416,7 +298,10 @@ namespace BottleShips
         internal static bool IsQuickCartCandidate(Vagon vagon, Player player, out float distance)
         {
             distance = float.PositiveInfinity;
-            if (vagon.m_attachPoint == null || vagon.transform.up.y < 0.1f)
+            if (vagon == null
+                || Utils.GetPrefabName(vagon.gameObject) != "Cart"
+                || vagon.m_attachPoint == null
+                || vagon.transform.up.y < 0.1f)
             {
                 return false;
             }
@@ -442,19 +327,18 @@ namespace BottleShips
                 return;
             }
 
-            if (Hud.InRadial() || player.m_hovering != null || player.m_doodadController != null)
+            if (player.m_hovering != null || player.m_doodadController != null)
             {
                 return;
             }
 
-            if (!PlayerCanQuickCart() || IsUiBlockingQuickCart())
+            if (!PlayerCanQuickCart(player) || IsUiBlockingQuickCart())
             {
                 return;
             }
 
             if (TryGetNearbyQuickCart(player, out Vagon? vagon) && vagon != null)
             {
-                OpenQuickCartAttachWindow();
                 vagon.Interact(player, hold: false, alt: false);
             }
         }
@@ -505,7 +389,6 @@ namespace BottleShips
                     (synchronizedSetting ? " [Synced with Server]" : " [Not Synced with Server]"),
                     description.AcceptableValues, tags);
             ConfigEntry<T> configEntry = Config.Bind(group, name, value, extendedDescription);
-            //var configEntry = Config.Bind(group, name, value, description);
 
             SyncedConfigEntry<T> syncedConfigEntry = ConfigSync.AddConfigEntry(configEntry);
             syncedConfigEntry.SynchronizedConfig = synchronizedSetting;
@@ -524,97 +407,65 @@ namespace BottleShips
             public int? Order = null;
         }
 
+        internal struct QuickCartDistanceState
+        {
+            internal bool Active;
+            internal readonly float DetachDistance;
+
+            internal QuickCartDistanceState(float detachDistance)
+            {
+                Active = true;
+                DetachDistance = detachDistance;
+            }
+        }
+
         #endregion
     }
 
     [HarmonyPatch(typeof(Player), nameof(Player.Update))]
     internal static class BottleShipsPlayerUpdateExtendedCartPatch
     {
-        private static bool _hadDoodadController;
+        private static void Prefix(Player __instance, out bool __state)
+        {
+            __state = __instance == Player.m_localPlayer && __instance.m_doodadController != null;
+        }
 
-        private static void Prefix(Player __instance)
+        private static void Postfix(Player __instance, bool __state)
         {
             if (__instance == Player.m_localPlayer)
             {
-                _hadDoodadController = __instance.m_doodadController != null;
-            }
-        }
-
-        private static void Postfix(Player __instance)
-        {
-            if (__instance == Player.m_localPlayer)
-            {
-                BottleShipsPlugin.HandleExtendedCartUse(__instance, _hadDoodadController);
+                BottleShipsPlugin.HandleExtendedCartUse(__instance, __state);
             }
         }
     }
 
-    [HarmonyPatch(typeof(Vagon), nameof(Vagon.Interact))]
-    internal static class BottleShipsVagonInteractPatch
+    [HarmonyPatch(typeof(Vagon), "FixedUpdate")]
+    internal static class BottleShipsVagonFixedUpdatePatch
     {
-        private static void Prefix(Vagon __instance, Humanoid character, bool hold, bool alt)
+        [HarmonyPriority(Priority.Last)]
+        private static void Prefix(
+            Vagon __instance,
+            out BottleShipsPlugin.QuickCartDistanceState __state)
         {
-            if (hold || alt || !BottleShipsPlugin.ExtendedCartInteractionEnabled)
-            {
-                return;
-            }
-
-            Player player = Player.m_localPlayer;
-            if (player == null || character != player)
-            {
-                return;
-            }
-
-            if (!BottleShipsPlugin.PlayerCanQuickCart() || BottleShipsPlugin.IsUiBlockingQuickCart())
-            {
-                return;
-            }
-
-            if (BottleShipsPlugin.IsQuickCartCandidate(__instance, player, out float distance) &&
-                (distance <= BottleShipsPlugin.QuickCartDistance || __instance.IsAttached(player)))
-            {
-                BottleShipsPlugin.OpenQuickCartAttachWindow();
-            }
+            BottleShipsPlugin.TryApplyExtendedCartDistance(__instance, out __state);
         }
-    }
 
-    [HarmonyPatch(typeof(Vagon), nameof(Vagon.CanAttach))]
-    internal static class BottleShipsVagonCanAttachPatch
-    {
-        private static bool Prefix(Vagon __instance, GameObject go, ref bool __result)
+        [HarmonyPriority(Priority.First)]
+        private static void Postfix(
+            Vagon __instance,
+            ref BottleShipsPlugin.QuickCartDistanceState __state)
         {
-            if (!BottleShipsPlugin.QuickCartAttachWindowActive)
-            {
-                return true;
-            }
-
-            Player player = Player.m_localPlayer;
-            if (player == null || go != player.gameObject)
-            {
-                return true;
-            }
-
-            if (__instance.transform.up.y < 0.1f)
-            {
-                __result = false;
-                return false;
-            }
-
-            __result = !player.IsTeleporting()
-                       && !player.InDodge()
-                       && __instance.m_attachPoint != null
-                       && Vector3.Distance(go.transform.position + __instance.m_attachOffset,
-                           __instance.m_attachPoint.position) < BottleShipsPlugin.QuickCartDistance;
-            return false;
+            BottleShipsPlugin.RestoreExtendedCartDistance(__instance, ref __state);
         }
-    }
 
-    [HarmonyPatch(typeof(Trap), nameof(Trap.TriggerTrap))]
-    internal static class BottleShipsTrapTriggerTrapPatch
-    {
-        private static void Postfix(Trap __instance)
+        [HarmonyPriority(Priority.First)]
+        private static Exception? Finalizer(
+            Vagon __instance,
+            Exception? __exception,
+            ref BottleShipsPlugin.QuickCartDistanceState __state)
         {
-            BottleShipsPlugin.ScheduleTrollTrapAutoReload(__instance);
+            BottleShipsPlugin.RestoreExtendedCartDistance(__instance, ref __state);
+            return __exception;
         }
     }
 
@@ -623,22 +474,145 @@ namespace BottleShips
     {
         private static void Postfix(Trap __instance)
         {
-            BottleShipsPlugin.TryAutoReloadTrollTrapFallback(__instance);
+            BottleShipsPlugin.TryAutoReloadTrollTrap(__instance);
         }
     }
 
     [HarmonyPatch(typeof(Turret), nameof(Turret.UpdateTarget))]
     internal static class BottleShipsTurretUpdateTargetPatch
     {
-        private static bool Prefix(Turret __instance, float dt)
+        [ThreadStatic]
+        private static int _selectionDepth;
+
+        internal static bool IsSelectingTarget => _selectionDepth > 0;
+
+        [HarmonyPriority(Priority.Last)]
+        private static void Prefix(Turret __instance, out TargetingState __state)
         {
+            __state = default;
             if (!BottleShipsPlugin.BallistaTargetingTweaksEnabled)
             {
-                return true;
+                return;
             }
 
-            BottleShipsPlugin.UpdateBallistaTarget(__instance, dt);
-            return false;
+            __state = new TargetingState(__instance.m_targetPlayers);
+            __instance.m_targetPlayers = false;
+            ++_selectionDepth;
+        }
+
+        [HarmonyPriority(Priority.First)]
+        private static void Postfix(Turret __instance, ref TargetingState __state)
+        {
+            try
+            {
+                if (__state.Active &&
+                    __instance.m_haveTarget &&
+                    __instance.m_target != null &&
+                    __instance.m_target.IsPlayer() &&
+                    __instance.m_nview != null &&
+                    __instance.m_nview.IsValid())
+                {
+                    __instance.m_nview.InvokeRPC(ZNetView.Everybody, "RPC_SetTarget", ZDOID.None);
+                    __instance.m_lostTargetEffect.Create(__instance.transform.position, __instance.transform.rotation);
+                }
+            }
+            finally
+            {
+                Restore(__instance, ref __state);
+            }
+        }
+
+        [HarmonyPriority(Priority.First)]
+        private static Exception? Finalizer(
+            Turret __instance,
+            Exception? __exception,
+            ref TargetingState __state)
+        {
+            Restore(__instance, ref __state);
+            return __exception;
+        }
+
+        private static void Restore(Turret turret, ref TargetingState state)
+        {
+            if (!state.Active)
+            {
+                return;
+            }
+
+            turret.m_targetPlayers = state.TargetPlayers;
+            if (_selectionDepth > 0)
+            {
+                --_selectionDepth;
+            }
+
+            state.Active = false;
+        }
+
+        private struct TargetingState
+        {
+            internal bool Active;
+            internal readonly bool TargetPlayers;
+
+            internal TargetingState(bool targetPlayers)
+            {
+                Active = true;
+                TargetPlayers = targetPlayers;
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(BaseAI), nameof(BaseAI.FindClosestCreature))]
+    internal static class BottleShipsBallistaFindClosestCreaturePatch
+    {
+        [ThreadStatic]
+        private static bool _findingFallback;
+
+        private static void Postfix(
+            Transform me,
+            Vector3 eyePoint,
+            float hearRange,
+            float viewRange,
+            float viewAngle,
+            bool alerted,
+            bool mistVision,
+            bool passiveAggresive,
+            bool includePlayers,
+            bool includeTamed,
+            bool includeEnemies,
+            List<Character> onlyTargets,
+            ref Character? __result)
+        {
+            if (!BottleShipsTurretUpdateTargetPatch.IsSelectingTarget ||
+                _findingFallback ||
+                __result != null ||
+                !includeEnemies ||
+                onlyTargets == null ||
+                onlyTargets.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                _findingFallback = true;
+                __result = BaseAI.FindClosestCreature(
+                    me,
+                    eyePoint,
+                    hearRange,
+                    viewRange,
+                    viewAngle,
+                    alerted,
+                    mistVision,
+                    passiveAggresive,
+                    includePlayers: false,
+                    includeTamed: includeTamed,
+                    includeEnemies: includeEnemies,
+                    onlyTargets: new List<Character>());
+            }
+            finally
+            {
+                _findingFallback = false;
+            }
         }
     }
 
