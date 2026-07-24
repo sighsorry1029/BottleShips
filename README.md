@@ -80,15 +80,14 @@ General options:
 * `Ballista Targeting Tweaks`: trophy targets are prioritized, but the ballista can still attack other valid enemies. Players are never selected as targets.
 * `Battering Ram Size`: scales newly placed battering rams. Default: `0.75`. Range: `0.5-1`. Existing placed battering rams are not changed.
 
+Ship tweaks apply to every object with a `Ship` component, including ships added by other mods.
+
 Ship tweak options:
 
-* `Scope`: affects the four supported vanilla ships by default, or every `Ship` component when set to `AllShips`.
-* `Camera Max Distance`: absolute maximum camera zoom distance while controlling, standing on, or inside an affected ship. Default: `6`, the vanilla value. Client-only.
-* `Explore Radius Multiplier`: multiplies minimap exploration radius while aboard an affected ship. Default: `1`.
-* `Sailing Force Multiplier`: changes wind-driven force at Half or Full sail. Default: `1`.
-* `Paddling Force Multiplier`: changes manual forward and reverse paddling at Slow or Back. Default: `1`.
-* `Steering Multiplier`: changes speed-based sailing steering and Slow/Back paddle steering. Default: `1`.
-* `Paddling Bonus Per Passenger`: adds paddling propulsion and paddle-steering force for each other player aboard. Default: `0`.
+* `Camera Max Distance`: absolute maximum camera zoom distance while controlling, standing on, or inside a ship. Default: `6`, the vanilla value. At `6`, BottleShips does not patch camera distance, allowing another camera mod to keep control. Client-only.
+* `Explore Radius Multiplier`: multiplies minimap exploration radius while aboard a ship. Default: `1`.
+* `Ship Power Multiplier`: scales wind-driven force at Half or Full and manual propulsion plus paddle steering at Slow or Back. It does not multiply speed-based steering or directly set top speed. Default: `1`.
+* `Enable Power Paddling`: the helmsman and passengers seated in ship chairs can each hold Run to consume a base 10 stamina per second and add 50% of the ship's globally scaled paddling force. Passive occupants add nothing. It works at Back, Slow, Half, and Full; at Half or Full the rowing force is added separately without multiplying wind force. Each active paddler gets a smooth `+10` camera FOV effect. Default: `Off`.
 
 BottleShips disables its ship tweaks when RockTheBoat is installed to avoid applying the same camera, minimap, and ship physics changes twice.
 

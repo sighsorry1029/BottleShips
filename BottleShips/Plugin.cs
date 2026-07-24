@@ -102,6 +102,7 @@ namespace BottleShips
                 _watcher = null;
             }
 
+            ShipTweaksManager.Shutdown();
             _harmony.UnpatchSelf();
             _quickCartAttachWindowTarget = null;
             _quickCartAttachWindowUntil = float.NegativeInfinity;

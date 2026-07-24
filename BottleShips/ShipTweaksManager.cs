@@ -11,97 +11,74 @@ internal static class ShipTweaksManager
 {
     private const string ConfigGroup = "20 - Ship Tweaks";
     private const string RockTheBoatGuid = "shudnal.RockTheBoat";
+    private const string PowerPaddlingRpc = "sighsorry.BottleShips.SetPowerPaddling";
+    private const float PowerPaddlingForcePerPlayer = 0.5f;
+    private const float PowerPaddlingStaminaPerSecond = 10f;
+    private const float PowerPaddlingFovIncrease = 10f;
+    private const float PowerPaddlingHeartbeatInterval = 0.2f;
+    private const float PowerPaddlingHeartbeatTimeout = 0.75f;
+    private const float PowerPaddlingFovRiseSeconds = 0.4f;
+    private const float PowerPaddlingFovFallSeconds = 0.25f;
 
-    private static readonly HashSet<string> SupportedShipPrefabs = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Raft",
-        "Karve",
-        "VikingShip",
-        "VikingShip_Ashlands"
-    };
+    private static readonly Dictionary<Ship, Dictionary<long, PowerPaddlingRequest>> PowerPaddlingRequests = new();
+    private static readonly Dictionary<Ship, PowerPaddlingPhysicsContext> PowerPaddlingPhysicsContexts = new();
+    private static readonly List<long> InvalidPowerPaddlingSenders = new();
 
-    private static ConfigEntry<ShipScope> _scope = null!;
     private static ConfigEntry<float> _cameraMaxDistance = null!;
     private static ConfigEntry<float> _exploreRadiusMultiplier = null!;
-    private static ConfigEntry<float> _sailingForceMultiplier = null!;
-    private static ConfigEntry<float> _paddlingForceMultiplier = null!;
-    private static ConfigEntry<float> _steeringMultiplier = null!;
-    private static ConfigEntry<float> _paddlingBonusPerPassenger = null!;
+    private static ConfigEntry<float> _shipPowerMultiplier = null!;
+    private static ConfigEntry<BottleShipsPlugin.Toggle> _enablePowerPaddling = null!;
     private static bool _rockTheBoatChecked;
     private static bool _rockTheBoatInstalled;
     private static bool _rockTheBoatWarningLogged;
-
-    internal enum ShipScope
-    {
-        SupportedVanillaShips,
-        AllShips
-    }
+    private static Ship? _localPowerPaddlingShip;
+    private static bool _localPowerPaddlingRequested;
+    private static float _nextPowerPaddlingHeartbeat;
+    private static float _powerPaddlingFovOffset;
 
     internal static void BindConfig(BottleShipsPlugin plugin)
     {
-        _scope = plugin.config(
-            ConfigGroup,
-            "Scope",
-            ShipScope.SupportedVanillaShips,
-            "Ships affected by these settings. SupportedVanillaShips includes Raft, Karve, Longship, and Drakkar. AllShips also includes ships added by other mods.",
-            order: 1000);
         _cameraMaxDistance = plugin.config(
             ConfigGroup,
             "Camera Max Distance",
             6f,
             new ConfigDescription(
-                "Maximum camera zoom distance while controlling, standing on, or inside an affected ship. The vanilla value is 6.",
+                "Maximum camera zoom distance while controlling, standing on, or inside a ship. The vanilla default is 6; at 6 BottleShips does not patch camera distance, allowing another camera mod to keep control.",
                 new AcceptableValueRange<float>(6f, 100f)),
             synchronizedSetting: false,
-            order: 990);
+            order: 1000);
         _exploreRadiusMultiplier = plugin.config(
             ConfigGroup,
             "Explore Radius Multiplier",
             1f,
             new ConfigDescription(
-                "Multiplier for the minimap exploration radius while controlling, standing on, or inside an affected ship.",
+                "Multiplier for the minimap exploration radius while controlling, standing on, or inside a ship.",
                 new AcceptableValueRange<float>(0.1f, 10f)),
+            order: 990);
+        _shipPowerMultiplier = plugin.config(
+            ConfigGroup,
+            "Ship Power Multiplier",
+            1f,
+            new ConfigDescription(
+                "Multiplier for wind-driven force at Half or Full and manual propulsion at Slow or Back. It also scales paddle steering at Slow or Back, but not speed-based steering or rudder response. This mainly changes acceleration rather than setting top speed directly. 1 is vanilla; 0 removes these propulsion forces and paddle steering.",
+                new AcceptableValueRange<float>(0f, 5f)),
             order: 980);
-        _sailingForceMultiplier = plugin.config(
+        _enablePowerPaddling = plugin.config(
             ConfigGroup,
-            "Sailing Force Multiplier",
-            1f,
-            new ConfigDescription(
-                "Multiplier for wind-driven force while sailing at Half or Full. This mainly changes acceleration and does not scale top speed directly. The passenger bonus does not apply. 1 is vanilla; 0 removes sail force.",
-                new AcceptableValueRange<float>(0f, 5f)),
+            "Enable Power Paddling",
+            BottleShipsPlugin.Toggle.Off,
+            "If on, the helmsman and passengers seated in ship chairs can hold the Run input to power paddle. Each active player consumes a base 10 stamina per second and adds 50% of the ship's paddling force at Back, Slow, Half, or Full; merely sitting aboard adds nothing. At Half or Full this is separate rowing thrust and does not multiply wind force. The active player's camera field of view smoothly increases by up to 10 degrees.",
             order: 970);
-        _paddlingForceMultiplier = plugin.config(
-            ConfigGroup,
-            "Paddling Force Multiplier",
-            1f,
-            new ConfigDescription(
-                "Multiplier for manual forward paddling at Slow and reverse paddling at Back. The passenger factor is also applied to this force. 1 is vanilla; 0 removes paddling force.",
-                new AcceptableValueRange<float>(0f, 5f)),
-            order: 960);
-        _steeringMultiplier = plugin.config(
-            ConfigGroup,
-            "Steering Multiplier",
-            1f,
-            new ConfigDescription(
-                "Multiplier for speed-based steering while sailing and paddle steering at Slow or Back. The passenger factor applies only to the Slow or Back paddle steering portion. 1 is vanilla; 0 removes steering force.",
-                new AcceptableValueRange<float>(0f, 5f)),
-            order: 950);
-        _paddlingBonusPerPassenger = plugin.config(
-            ConfigGroup,
-            "Paddling Bonus Per Passenger",
-            0f,
-            new ConfigDescription(
-                "Additive bonus for each other player aboard. The factor is 1 + this value times the passenger count and affects only Slow or Back paddling propulsion and paddle steering, not sail force or speed-based steering. 0 disables the bonus.",
-                new AcceptableValueRange<float>(0f, 1f)),
-            order: 940);
-
+        _enablePowerPaddling.SettingChanged += (_, _) => HandlePowerPaddlingConfigChanged();
     }
 
     internal static bool TryApplyCameraDistance(GameCamera camera, out CameraDistanceState state)
     {
         state = default;
         float maxDistance = GetFiniteValue(_cameraMaxDistance, 6f);
-        if (maxDistance <= camera.m_minDistance || !TryGetAffectedLocalShip(Player.m_localPlayer, out _))
+        if (maxDistance <= 6f
+            || maxDistance <= camera.m_minDistance
+            || !TryGetAffectedLocalShip(Player.m_localPlayer, out _))
         {
             return false;
         }
@@ -155,47 +132,51 @@ internal static class ShipTweaksManager
     internal static bool TryApplyHandling(Ship ship, out ShipHandlingState state)
     {
         state = default;
+        PowerPaddlingPhysicsContexts.Remove(ship);
         if (!ShouldAffect(ship)
             || ship.m_nview == null
-            || !ship.m_nview.IsValid()
-            || !ship.m_nview.IsOwner())
+            || !ship.m_nview.IsValid())
         {
             return false;
         }
 
-        float sailingMultiplier = GetFiniteValue(_sailingForceMultiplier, 1f);
-        float paddlingMultiplier = GetFiniteValue(_paddlingForceMultiplier, 1f);
-        float steeringMultiplier = GetFiniteValue(_steeringMultiplier, 1f);
-        float passengerBonus = GetFiniteValue(_paddlingBonusPerPassenger, 0f);
-
-        bool changesHandling = !Mathf.Approximately(sailingMultiplier, 1f)
-                               || !Mathf.Approximately(paddlingMultiplier, 1f)
-                               || !Mathf.Approximately(steeringMultiplier, 1f)
-                               || passengerBonus > 0f;
-        if (!changesHandling)
+        if (!ship.m_nview.IsOwner())
         {
+            PowerPaddlingRequests.Remove(ship);
             return false;
         }
 
-        float passengerFactor = passengerBonus > 0f
-            ? 1f + passengerBonus * CountPassengers(ship)
-            : 1f;
+        float shipPowerMultiplier = GetFiniteValue(_shipPowerMultiplier, 1f);
+        int activePaddlers = CountActivePowerPaddlers(ship);
+        float powerPaddlingBonus = activePaddlers * PowerPaddlingForcePerPlayer;
+        if (Mathf.Approximately(shipPowerMultiplier, 1f) && powerPaddlingBonus <= 0f)
+        {
+            return false;
+        }
 
         state = new ShipHandlingState(
             ship.m_sailForceFactor,
             ship.m_backwardForce,
-            ship.m_stearVelForceFactor,
             ship.m_stearForce);
 
-        ship.m_sailForceFactor *= sailingMultiplier;
-        ship.m_backwardForce *= paddlingMultiplier * passengerFactor;
-        ship.m_stearVelForceFactor *= steeringMultiplier;
-        ship.m_stearForce *= steeringMultiplier * passengerFactor;
+        ship.m_sailForceFactor *= shipPowerMultiplier;
+        ship.m_backwardForce *= shipPowerMultiplier;
+        ship.m_stearForce *= shipPowerMultiplier;
+
+        if (powerPaddlingBonus > 0f)
+        {
+            PowerPaddlingPhysicsContexts[ship] = new PowerPaddlingPhysicsContext(
+                powerPaddlingBonus,
+                ship.m_backwardForce,
+                ship.m_stearForce);
+        }
+
         return true;
     }
 
     internal static void RestoreHandling(Ship ship, ref ShipHandlingState state)
     {
+        PowerPaddlingPhysicsContexts.Remove(ship);
         if (!state.Active)
         {
             return;
@@ -203,9 +184,421 @@ internal static class ShipTweaksManager
 
         ship.m_sailForceFactor = state.SailForceFactor;
         ship.m_backwardForce = state.BackwardForce;
-        ship.m_stearVelForceFactor = state.SteeringVelocityForceFactor;
         ship.m_stearForce = state.SteeringForce;
         state.Active = false;
+    }
+
+    internal static void ApplyPowerPaddlingForce(Ship ship, float fixedDeltaTime)
+    {
+        if (!PowerPaddlingPhysicsContexts.TryGetValue(
+                ship,
+                out PowerPaddlingPhysicsContext context)
+            || context.Applied
+            || context.Bonus <= 0f
+            || fixedDeltaTime <= 0f
+            || !IsPowerPaddlingGear(ship)
+            || ship.m_nview == null
+            || !ship.m_nview.IsValid()
+            || !ship.m_nview.IsOwner()
+            || ship.m_body == null)
+        {
+            return;
+        }
+
+        context.Applied = true;
+        Transform shipTransform = ship.transform;
+        float direction = ship.m_speed == Ship.Speed.Back ? -1f : 1f;
+        Vector3 paddleForce =
+            shipTransform.forward
+            * (context.BackwardForce * (1f - Mathf.Abs(ship.m_rudderValue)));
+        paddleForce +=
+            shipTransform.right
+            * (context.SteeringForce * -ship.m_rudderValue);
+        paddleForce *= direction * context.Bonus;
+
+        Vector3 forcePoint =
+            shipTransform.position
+            + shipTransform.forward * ship.m_stearForceOffset;
+        ship.m_body.AddForceAtPosition(
+            paddleForce * (ship.m_body.mass * fixedDeltaTime),
+            forcePoint,
+            ForceMode.Impulse);
+    }
+
+    internal static void RegisterPowerPaddlingRpc(Ship ship)
+    {
+        if (ship == null || ship.m_nview == null)
+        {
+            return;
+        }
+
+        PowerPaddlingRequests.Remove(ship);
+        ship.m_nview.Register<bool>(
+            PowerPaddlingRpc,
+            (sender, requested) => HandlePowerPaddlingRequest(ship, sender, requested));
+    }
+
+    internal static void UpdatePowerPaddlingInput(PlayerController input)
+    {
+        if (input == null || input.m_character != Player.m_localPlayer)
+        {
+            return;
+        }
+
+        Player player = input.m_character;
+        Ship? ship = null;
+        bool requested = PowerPaddlingEnabled
+                         && TryGetLocalPowerPaddlingShip(player, out ship)
+                         && ship != null
+                         && IsPowerPaddlingGear(ship)
+                         && !PlayerController.HasInputDelay
+                         && input.TakeInput()
+                         && input.m_runPressedWhileStamina
+                         && (ZInput.GetButton("Run") || ZInput.GetButton("JoyRun"))
+                         && player.HaveStamina();
+
+        if (requested)
+        {
+            player.UseStamina(
+                PowerPaddlingStaminaPerSecond * Time.fixedDeltaTime * Game.m_moveStaminaRate);
+        }
+
+        SetLocalPowerPaddlingRequest(ship, requested);
+    }
+
+    internal static void StopLocalPowerPaddling(Player player)
+    {
+        if (player == Player.m_localPlayer)
+        {
+            SetLocalPowerPaddlingRequest(null, requested: false);
+        }
+    }
+
+    internal static void RemovePowerPaddlingState(Ship ship)
+    {
+        PowerPaddlingRequests.Remove(ship);
+        PowerPaddlingPhysicsContexts.Remove(ship);
+        if (_localPowerPaddlingShip == ship)
+        {
+            SetLocalPowerPaddlingRequest(null, requested: false);
+            _powerPaddlingFovOffset = 0f;
+        }
+    }
+
+    internal static void ApplyPowerPaddlingFov(GameCamera camera, float deltaTime)
+    {
+        bool active = IsLocalPowerPaddlingActive();
+        if (!active && _localPowerPaddlingRequested)
+        {
+            SetLocalPowerPaddlingRequest(null, requested: false);
+        }
+
+        float target = active ? PowerPaddlingFovIncrease : 0f;
+        float transitionSeconds = active ? PowerPaddlingFovRiseSeconds : PowerPaddlingFovFallSeconds;
+        float maxDelta = PowerPaddlingFovIncrease * Mathf.Max(0f, deltaTime) / transitionSeconds;
+        _powerPaddlingFovOffset = Mathf.MoveTowards(_powerPaddlingFovOffset, target, maxDelta);
+
+        if (camera == null
+            || camera.m_freeFly
+            || _powerPaddlingFovOffset <= 0f)
+        {
+            return;
+        }
+
+        if (camera.m_camera != null)
+        {
+            camera.m_camera.fieldOfView =
+                Mathf.Clamp(camera.m_fov + _powerPaddlingFovOffset, 0.5f, 165f);
+        }
+
+        if (camera.m_skyCamera != null)
+        {
+            camera.m_skyCamera.fieldOfView =
+                Mathf.Clamp(camera.m_fov + _powerPaddlingFovOffset, 0.5f, 165f);
+        }
+    }
+
+    internal static void Shutdown()
+    {
+        SetLocalPowerPaddlingRequest(null, requested: false);
+        PowerPaddlingRequests.Clear();
+        PowerPaddlingPhysicsContexts.Clear();
+        InvalidPowerPaddlingSenders.Clear();
+        _powerPaddlingFovOffset = 0f;
+    }
+
+    private static bool PowerPaddlingEnabled =>
+        _enablePowerPaddling != null && _enablePowerPaddling.Value == BottleShipsPlugin.Toggle.On;
+
+    private static void HandlePowerPaddlingConfigChanged()
+    {
+        if (PowerPaddlingEnabled)
+        {
+            return;
+        }
+
+        ClearPowerPaddlingState();
+    }
+
+    private static void ClearPowerPaddlingState()
+    {
+        SetLocalPowerPaddlingRequest(null, requested: false);
+        PowerPaddlingRequests.Clear();
+        PowerPaddlingPhysicsContexts.Clear();
+    }
+
+    private static void HandlePowerPaddlingRequest(Ship ship, long sender, bool requested)
+    {
+        if (ship == null
+            || ship.m_nview == null
+            || !ship.m_nview.IsValid()
+            || !ship.m_nview.IsOwner())
+        {
+            return;
+        }
+
+        if (!requested)
+        {
+            RemovePowerPaddlingRequest(ship, sender);
+            return;
+        }
+
+        if (!PowerPaddlingEnabled || !ShouldAffect(ship))
+        {
+            PowerPaddlingRequests.Remove(ship);
+            return;
+        }
+
+        if (sender == 0L
+            || !IsPowerPaddlingGear(ship)
+            || !ship.HaveControllingPlayer()
+            || !TryFindUniqueAboardPlayer(ship, sender, out Player? player)
+            || player == null)
+        {
+            RemovePowerPaddlingRequest(ship, sender);
+            return;
+        }
+
+        if (!PowerPaddlingRequests.TryGetValue(
+                ship,
+                out Dictionary<long, PowerPaddlingRequest> requests))
+        {
+            requests = new Dictionary<long, PowerPaddlingRequest>();
+            PowerPaddlingRequests.Add(ship, requests);
+        }
+
+        if (!requests.TryGetValue(sender, out PowerPaddlingRequest request))
+        {
+            request = new PowerPaddlingRequest();
+            requests.Add(sender, request);
+        }
+
+        request.PlayerId = player.GetPlayerID();
+        request.LastHeartbeat = Time.unscaledTime;
+    }
+
+    private static int CountActivePowerPaddlers(Ship ship)
+    {
+        if (!PowerPaddlingEnabled
+            || !IsPowerPaddlingGear(ship)
+            || !ship.HaveControllingPlayer())
+        {
+            PowerPaddlingRequests.Remove(ship);
+            return 0;
+        }
+
+        if (!PowerPaddlingRequests.TryGetValue(
+                ship,
+                out Dictionary<long, PowerPaddlingRequest> requests))
+        {
+            return 0;
+        }
+
+        InvalidPowerPaddlingSenders.Clear();
+        int activeCount = 0;
+        float now = Time.unscaledTime;
+        foreach (KeyValuePair<long, PowerPaddlingRequest> entry in requests)
+        {
+            bool valid = now - entry.Value.LastHeartbeat <= PowerPaddlingHeartbeatTimeout
+                         && TryFindUniqueAboardPlayer(ship, entry.Key, out Player? player)
+                         && player != null
+                         && player.GetPlayerID() == entry.Value.PlayerId;
+            if (valid)
+            {
+                ++activeCount;
+            }
+            else
+            {
+                InvalidPowerPaddlingSenders.Add(entry.Key);
+            }
+        }
+
+        for (int i = 0; i < InvalidPowerPaddlingSenders.Count; ++i)
+        {
+            requests.Remove(InvalidPowerPaddlingSenders[i]);
+        }
+
+        InvalidPowerPaddlingSenders.Clear();
+        if (requests.Count == 0)
+        {
+            PowerPaddlingRequests.Remove(ship);
+        }
+
+        return activeCount;
+    }
+
+    private static bool IsLocalPowerPaddlingActive()
+    {
+        Player? player = Player.m_localPlayer;
+        return _localPowerPaddlingRequested
+               && _localPowerPaddlingShip != null
+               && player != null
+               && PowerPaddlingEnabled
+               && TryGetLocalPowerPaddlingShip(player, out Ship? ship)
+               && ship == _localPowerPaddlingShip
+               && IsPowerPaddlingGear(_localPowerPaddlingShip);
+    }
+
+    private static bool IsPowerPaddlingGear(Ship ship)
+    {
+        return ship.m_speed == Ship.Speed.Back
+               || ship.m_speed == Ship.Speed.Slow
+               || ship.m_speed == Ship.Speed.Half
+               || ship.m_speed == Ship.Speed.Full;
+    }
+
+    private static void SetLocalPowerPaddlingRequest(Ship? ship, bool requested)
+    {
+        if (_localPowerPaddlingShip != null
+            && (_localPowerPaddlingShip != ship || !requested)
+            && _localPowerPaddlingRequested)
+        {
+            SendPowerPaddlingRequest(_localPowerPaddlingShip, requested: false);
+        }
+
+        if (!requested || ship == null)
+        {
+            _localPowerPaddlingShip = null;
+            _localPowerPaddlingRequested = false;
+            _nextPowerPaddlingHeartbeat = 0f;
+            return;
+        }
+
+        bool changedShip = _localPowerPaddlingShip != ship;
+        bool shouldSend = changedShip
+                          || !_localPowerPaddlingRequested
+                          || Time.unscaledTime >= _nextPowerPaddlingHeartbeat;
+
+        _localPowerPaddlingShip = ship;
+        _localPowerPaddlingRequested = true;
+        if (shouldSend)
+        {
+            SendPowerPaddlingRequest(ship, requested: true);
+            _nextPowerPaddlingHeartbeat = Time.unscaledTime + PowerPaddlingHeartbeatInterval;
+        }
+    }
+
+    private static void SendPowerPaddlingRequest(Ship ship, bool requested)
+    {
+        if (ship != null
+            && ship.m_nview != null
+            && ship.m_nview.IsValid()
+            && ZRoutedRpc.instance != null)
+        {
+            ship.m_nview.InvokeRPC(PowerPaddlingRpc, requested);
+        }
+    }
+
+    private static void RemovePowerPaddlingRequest(Ship ship, long sender)
+    {
+        if (!PowerPaddlingRequests.TryGetValue(
+                ship,
+                out Dictionary<long, PowerPaddlingRequest> requests))
+        {
+            return;
+        }
+
+        requests.Remove(sender);
+        if (requests.Count == 0)
+        {
+            PowerPaddlingRequests.Remove(ship);
+        }
+    }
+
+    private static bool TryFindUniqueAboardPlayer(Ship ship, long owner, out Player? player)
+    {
+        player = null;
+        for (int i = 0; i < ship.m_players.Count; ++i)
+        {
+            Player candidate = ship.m_players[i];
+            if (candidate == null || candidate.GetOwner() != owner)
+            {
+                continue;
+            }
+
+            if (player != null
+                && player != candidate
+                && player.GetPlayerID() != candidate.GetPlayerID())
+            {
+                player = null;
+                return false;
+            }
+
+            player = candidate;
+        }
+
+        return player != null;
+    }
+
+    private static bool TryGetLocalPowerPaddlingShip(Player player, out Ship? ship)
+    {
+        ship = player.GetControlledShip();
+        if (ship == null)
+        {
+            if (!player.IsAttachedToShip())
+            {
+                return false;
+            }
+
+            Transform? attachPoint = player.GetAttachPoint();
+            if (attachPoint != null)
+            {
+                ship = attachPoint.GetComponentInParent<Ship>();
+            }
+
+            if (ship == null && !TryFindSingleLocalShip(player, out ship))
+            {
+                return false;
+            }
+        }
+
+        return ship != null
+               && ship.IsPlayerInBoat(player)
+               && ship.HaveControllingPlayer()
+               && ShouldAffect(ship);
+    }
+
+    private static bool TryFindSingleLocalShip(Player player, out Ship? ship)
+    {
+        ship = null;
+        for (int i = 0; i < Ship.s_currentShips.Count; ++i)
+        {
+            Ship candidate = Ship.s_currentShips[i];
+            if (candidate == null || !candidate.IsPlayerInBoat(player))
+            {
+                continue;
+            }
+
+            if (ship != null && ship != candidate)
+            {
+                ship = null;
+                return false;
+            }
+
+            ship = candidate;
+        }
+
+        return ship != null;
     }
 
     private static bool TryGetAffectedLocalShip(Player? player, out Ship? ship)
@@ -232,18 +625,7 @@ internal static class ShipTweaksManager
 
     private static bool ShouldAffect(Ship? ship)
     {
-        if (ship == null || CheckForRockTheBoat())
-        {
-            return false;
-        }
-
-        if (_scope.Value == ShipScope.AllShips)
-        {
-            return true;
-        }
-
-        string prefabName = Utils.GetPrefabName(ship.gameObject);
-        return SupportedShipPrefabs.Contains(prefabName);
+        return ship != null && !CheckForRockTheBoat();
     }
 
     private static bool CheckForRockTheBoat()
@@ -266,50 +648,34 @@ internal static class ShipTweaksManager
         return _rockTheBoatInstalled;
     }
 
-    private static int CountPassengers(Ship ship)
-    {
-        long controllerId = ship.m_shipControlls != null ? ship.m_shipControlls.GetUser() : 0L;
-        int passengerCount = 0;
-
-        for (int i = 0; i < ship.m_players.Count; ++i)
-        {
-            Player player = ship.m_players[i];
-            if (player == null)
-            {
-                continue;
-            }
-
-            long playerId = player.GetPlayerID();
-            if (playerId == controllerId || IsDuplicatePassenger(ship.m_players, i, playerId, player))
-            {
-                continue;
-            }
-
-            ++passengerCount;
-        }
-
-        return passengerCount;
-    }
-
-    private static bool IsDuplicatePassenger(IReadOnlyList<Player> players, int index, long playerId, Player player)
-    {
-        for (int i = 0; i < index; ++i)
-        {
-            Player previous = players[i];
-            if (previous != null
-                && (previous == player || playerId != 0L && previous.GetPlayerID() == playerId))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private static float GetFiniteValue(ConfigEntry<float> entry, float fallback)
     {
         float value = entry.Value;
         return float.IsNaN(value) || float.IsInfinity(value) ? fallback : value;
+    }
+
+    private sealed class PowerPaddlingRequest
+    {
+        internal long PlayerId;
+        internal float LastHeartbeat;
+    }
+
+    private sealed class PowerPaddlingPhysicsContext
+    {
+        internal readonly float Bonus;
+        internal readonly float BackwardForce;
+        internal readonly float SteeringForce;
+        internal bool Applied;
+
+        internal PowerPaddlingPhysicsContext(
+            float bonus,
+            float backwardForce,
+            float steeringForce)
+        {
+            Bonus = bonus;
+            BackwardForce = backwardForce;
+            SteeringForce = steeringForce;
+        }
     }
 
     internal struct CameraDistanceState
@@ -343,19 +709,16 @@ internal static class ShipTweaksManager
         internal bool Active;
         internal readonly float SailForceFactor;
         internal readonly float BackwardForce;
-        internal readonly float SteeringVelocityForceFactor;
         internal readonly float SteeringForce;
 
         internal ShipHandlingState(
             float sailForceFactor,
             float backwardForce,
-            float steeringVelocityForceFactor,
             float steeringForce)
         {
             Active = true;
             SailForceFactor = sailForceFactor;
             BackwardForce = backwardForce;
-            SteeringVelocityForceFactor = steeringVelocityForceFactor;
             SteeringForce = steeringForce;
         }
     }
@@ -384,6 +747,16 @@ internal static class BottleShipsGameCameraUpdateCameraPatch
     {
         ShipTweaksManager.RestoreCameraDistance(__instance, ref __state);
         return __exception;
+    }
+}
+
+[HarmonyPatch(typeof(GameCamera), nameof(GameCamera.UpdateCamera), typeof(float))]
+internal static class BottleShipsGameCameraUpdateCameraPowerPaddlingPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(GameCamera __instance, float dt)
+    {
+        ShipTweaksManager.ApplyPowerPaddlingFov(__instance, dt);
     }
 }
 
@@ -439,5 +812,61 @@ internal static class BottleShipsShipCustomFixedUpdatePatch
     {
         ShipTweaksManager.RestoreHandling(__instance, ref __state);
         return __exception;
+    }
+}
+
+[HarmonyPatch(typeof(Ship), nameof(Ship.ApplyEdgeForce), typeof(float))]
+internal static class BottleShipsShipApplyEdgeForcePowerPaddlingPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Prefix(Ship __instance, float dt)
+    {
+        ShipTweaksManager.ApplyPowerPaddlingForce(__instance, dt);
+    }
+}
+
+[HarmonyPatch(typeof(Ship), nameof(Ship.Start))]
+internal static class BottleShipsShipStartPowerPaddlingPatch
+{
+    private static void Postfix(Ship __instance)
+    {
+        ShipTweaksManager.RegisterPowerPaddlingRpc(__instance);
+    }
+}
+
+[HarmonyPatch(typeof(Ship), nameof(Ship.OnDisable))]
+internal static class BottleShipsShipOnDisablePowerPaddlingPatch
+{
+    private static void Postfix(Ship __instance)
+    {
+        ShipTweaksManager.RemovePowerPaddlingState(__instance);
+    }
+}
+
+[HarmonyPatch(typeof(PlayerController), nameof(PlayerController.FixedUpdate))]
+internal static class BottleShipsPlayerControllerFixedUpdatePowerPaddlingPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(PlayerController __instance)
+    {
+        ShipTweaksManager.UpdatePowerPaddlingInput(__instance);
+    }
+}
+
+[HarmonyPatch(typeof(Player), nameof(Player.StopDoodadControl))]
+internal static class BottleShipsPlayerStopDoodadControlPowerPaddlingPatch
+{
+    private static void Prefix(Player __instance)
+    {
+        ShipTweaksManager.StopLocalPowerPaddling(__instance);
+    }
+}
+
+[HarmonyPatch(typeof(Player), nameof(Player.AttachStop))]
+internal static class BottleShipsPlayerAttachStopPowerPaddlingPatch
+{
+    private static void Prefix(Player __instance)
+    {
+        ShipTweaksManager.StopLocalPowerPaddling(__instance);
     }
 }
