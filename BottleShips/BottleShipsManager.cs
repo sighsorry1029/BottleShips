@@ -13,6 +13,28 @@ internal static class BottleShipsManager
 {
     private const string OriginalStationValue = "Original";
     private const string BatteringRamPrefab = "BatteringRam";
+
+    [Flags]
+    private enum ApplyScope
+    {
+        None = 0,
+        BottleWeight = 1 << 0,
+        BottleStack = 1 << 1,
+        BottleTeleportable = 1 << 2,
+        BottleRecipeEnabled = 1 << 3,
+        BottleRecipeStation = 1 << 4,
+        BottleRecipeResources = 1 << 5,
+        PieceResources = 1 << 6,
+        PieceStation = 1 << 7,
+        PieceCanBeRemoved = 1 << 8,
+        BatteringRamSize = 1 << 9,
+        BottleItem = BottleWeight | BottleStack | BottleTeleportable,
+        BottleRecipe = BottleRecipeEnabled | BottleRecipeStation | BottleRecipeResources,
+        PieceConfig = PieceResources | PieceStation | PieceCanBeRemoved,
+        Piece = PieceConfig | BatteringRamSize,
+        All = BottleItem | BottleRecipe | Piece,
+    }
+
     private static readonly BottleTarget[] Targets =
     {
         new("Raft", "Raft", "Raft_bottle", "piece_workbench", false, 45f, 2, true, "piece_workbench", 1, "Wood:20, LeatherScraps:6, Resin:6"),
@@ -31,12 +53,15 @@ internal static class BottleShipsManager
     private static readonly Dictionary<string, PieceBaseline> PieceBaselines = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Recipe> OwnedRecipes = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> WarnedMessages = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<BottleTarget, ApplyScope> PendingScopedApplies = new();
     private static bool ConfigBound;
     private static ZNetScene? BaselineScene;
-    private static bool ApplyPending;
+    private static bool FullApplyPending;
     private static bool ApplyWorkerRunning;
-    private static int ApplyNotBeforeFrame;
-    private static uint ApplyRequestVersion;
+    private static bool ApplyFailureLogged;
+    private static int ApplyRetryUntilFrame;
+
+    private static bool HasPendingApply => FullApplyPending || PendingScopedApplies.Count > 0;
 
     internal static IEnumerable<string> BottleItemNames => Targets.Select(target => target.BottlePrefab);
 
@@ -51,7 +76,7 @@ internal static class BottleShipsManager
         {
             BottleTarget target = Targets[index];
             target.Config = BottleConfig.Bind(plugin, target, index + 2);
-            target.Config.AddChangedHandler(QueueApply);
+            target.Config.AddChangedHandlers(scope => ApplyChanged(target, scope));
         }
 
         ConfigBound = true;
@@ -61,91 +86,154 @@ internal static class BottleShipsManager
     {
         try
         {
-            int attempt = 0;
-            uint observedVersion = ApplyRequestVersion;
-            while (attempt < 3600)
+            while (HasPendingApply && Time.frameCount <= ApplyRetryUntilFrame)
             {
                 yield return null;
 
-                if (!ApplyPending)
+                if (FullApplyPending)
                 {
+                    if (!TryApplyIfReady(Targets, ApplyScope.All))
+                    {
+                        continue;
+                    }
+
+                    FullApplyPending = false;
+                    PendingScopedApplies.Clear();
                     yield break;
                 }
 
-                if (Time.frameCount < ApplyNotBeforeFrame)
+                foreach (KeyValuePair<BottleTarget, ApplyScope> pending in PendingScopedApplies.ToArray())
                 {
-                    continue;
+                    if (TryApplyIfReady(new[] { pending.Key }, pending.Value))
+                    {
+                        PendingScopedApplies.Remove(pending.Key);
+                    }
                 }
 
-                if (observedVersion != ApplyRequestVersion)
-                {
-                    observedVersion = ApplyRequestVersion;
-                    attempt = 0;
-                }
-
-                ++attempt;
-                ApplyPending = false;
-                if (!TryApplyIfReady(out bool applied))
+                if (!HasPendingApply)
                 {
                     yield break;
-                }
-
-                if (applied && !ApplyPending)
-                {
-                    yield break;
-                }
-
-                if (!applied)
-                {
-                    ApplyPending = true;
                 }
             }
 
-            if (observedVersion != ApplyRequestVersion)
+            if (!HasPendingApply)
             {
                 yield break;
             }
 
-            ApplyPending = false;
-            BottleShipsPlugin.BottleShipsLogger.LogDebug("BottleShips could not apply configuration yet because ObjectDB, ZNetScene, or bottle item prefabs were not ready.");
+            FullApplyPending = false;
+            PendingScopedApplies.Clear();
+            BottleShipsPlugin.BottleShipsLogger.LogDebug(
+                "BottleShips stopped retrying configuration because required game data did not become ready in time.");
         }
         finally
         {
             ApplyWorkerRunning = false;
-            if (ApplyPending)
+            if (HasPendingApply)
             {
                 TryStartApplyWorker();
             }
         }
     }
 
-    private static bool TryApplyIfReady(out bool applied)
+    internal static void ApplyDefaultsOrRetry()
+    {
+        ApplyFailureLogged = false;
+        FullApplyPending = true;
+        PendingScopedApplies.Clear();
+        ApplyRetryUntilFrame = Time.frameCount + 3600;
+        if (TryApplyIfReady(Targets, ApplyScope.All))
+        {
+            FullApplyPending = false;
+            return;
+        }
+
+        TryStartApplyWorker();
+    }
+
+    private static void ApplyChanged(BottleTarget target, ApplyScope scope)
+    {
+        if (FullApplyPending)
+        {
+            return;
+        }
+
+        if (!HasPendingApply)
+        {
+            ApplyFailureLogged = false;
+        }
+
+        if (TryApplyIfReady(new[] { target }, scope))
+        {
+            if (PendingScopedApplies.TryGetValue(target, out ApplyScope pendingScope))
+            {
+                pendingScope &= ~scope;
+                if (pendingScope == ApplyScope.None)
+                {
+                    PendingScopedApplies.Remove(target);
+                }
+                else
+                {
+                    PendingScopedApplies[target] = pendingScope;
+                }
+            }
+
+            return;
+        }
+
+        PendingScopedApplies.TryGetValue(target, out ApplyScope existingScope);
+        PendingScopedApplies[target] = existingScope | scope;
+        ApplyRetryUntilFrame = Time.frameCount + 3600;
+        TryStartApplyWorker();
+    }
+
+    private static bool TryApplyIfReady(
+        IReadOnlyList<BottleTarget> targets,
+        ApplyScope scope)
     {
         try
         {
-            applied = ApplyIfReady();
+            if (!ConfigBound || ObjectDB.instance == null || ZNetScene.instance == null)
+            {
+                return false;
+            }
+
+            bool needsBottleItem =
+                (scope & (ApplyScope.BottleItem | ApplyScope.BottleRecipe | ApplyScope.PieceResources)) != 0;
+            foreach (BottleTarget target in targets)
+            {
+                if (needsBottleItem && ResolveItemDrop(target.BottlePrefab) == null)
+                {
+                    return false;
+                }
+            }
+
+            PrepareBaselineScene();
+            Piece[] livePieces = (scope & ApplyScope.PieceConfig) != 0
+                ? Piece.s_allPieces.ToArray()
+                : Array.Empty<Piece>();
+            foreach (BottleTarget target in targets)
+            {
+                ApplyBottleItem(target, scope);
+                ApplyBottleRecipe(target, scope);
+                ApplyPiece(target, livePieces, scope);
+            }
+
+            ApplyFailureLogged = false;
             return true;
         }
         catch (Exception exception)
         {
-            applied = false;
-            BottleShipsPlugin.BottleShipsLogger.LogError(
-                "BottleShips could not apply its configuration. A later config or game-database change will retry.");
-            BottleShipsPlugin.BottleShipsLogger.LogError(exception);
+            if (!ApplyFailureLogged)
+            {
+                ApplyFailureLogged = true;
+                BottleShipsPlugin.BottleShipsLogger.LogError(
+                    "BottleShips could not apply its configuration. A later config or game-database change will retry.");
+                BottleShipsPlugin.BottleShipsLogger.LogError(exception);
+            }
+
             return false;
         }
-    }
-
-    internal static void QueueApply()
-    {
-        ApplyPending = true;
-        ApplyNotBeforeFrame = Time.frameCount + 1;
-        unchecked
-        {
-            ++ApplyRequestVersion;
-        }
-
-        TryStartApplyWorker();
     }
 
     private static void TryStartApplyWorker()
@@ -163,130 +251,130 @@ internal static class BottleShipsManager
         catch (Exception exception)
         {
             ApplyWorkerRunning = false;
-            ApplyPending = false;
+            FullApplyPending = false;
+            PendingScopedApplies.Clear();
             BottleShipsPlugin.BottleShipsLogger.LogError(
                 "BottleShips could not start its configuration apply worker.");
             BottleShipsPlugin.BottleShipsLogger.LogError(exception);
         }
     }
 
-    private static bool ApplyIfReady()
+    private static void ApplyBottleItem(BottleTarget target, ApplyScope scope)
     {
-        if (!ConfigBound || ObjectDB.instance == null || ZNetScene.instance == null)
+        ApplyScope itemScope = scope & ApplyScope.BottleItem;
+        if (itemScope == ApplyScope.None || target.Config == null)
         {
-            return false;
+            return;
         }
 
-        if (!AllBottleItemsReady())
-        {
-            return false;
-        }
-
-        CaptureBaselinesIfNeeded();
-
-        Piece[] livePieces = Piece.s_allPieces.ToArray();
-        foreach (BottleTarget target in Targets)
-        {
-            ApplyBottleItem(target);
-            ApplyBottleRecipe(target);
-            ApplyPiece(target, livePieces);
-        }
-
-        return true;
-    }
-
-    private static bool AllBottleItemsReady()
-    {
-        foreach (BottleTarget target in Targets)
-        {
-            if (ResolveItemDrop(target.BottlePrefab) == null)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static void CaptureBaselinesIfNeeded()
-    {
-        ZNetScene currentScene = ZNetScene.instance;
-        if (BaselineScene != currentScene)
-        {
-            PieceBaselines.Clear();
-            WarnedMessages.Clear();
-            BaselineScene = currentScene;
-        }
-
-        foreach (BottleTarget target in Targets)
-        {
-            if (PieceBaselines.ContainsKey(target.PiecePrefab))
-            {
-                continue;
-            }
-
-            Piece? piece = ResolvePiece(target.PiecePrefab);
-            if (piece == null)
-            {
-                WarnOnce($"Could not capture baseline for piece '{target.PiecePrefab}': prefab was not found.");
-                continue;
-            }
-
-            PieceBaselines[target.PiecePrefab] = PieceBaseline.From(piece);
-        }
-    }
-
-    private static void ApplyBottleItem(BottleTarget target)
-    {
         ItemDrop? itemDrop = ResolveItemDrop(target.BottlePrefab);
-        if (itemDrop?.m_itemData?.m_shared == null || target.Config == null)
+        if (itemDrop?.m_itemData?.m_shared == null)
         {
             return;
         }
 
         ItemDrop.ItemData.SharedData shared = itemDrop.m_itemData.m_shared;
-        shared.m_weight = Math.Max(0f, target.Config.BottleWeight.Value);
-        shared.m_maxStackSize = Math.Max(1, target.Config.BottleStack.Value);
-        shared.m_teleportable = target.Config.BottleTeleportable.Value == BottleShipsPlugin.Toggle.On;
+        if ((itemScope & ApplyScope.BottleWeight) != 0)
+        {
+            shared.m_weight = Math.Max(0f, target.Config.BottleWeight.Value);
+        }
+
+        if ((itemScope & ApplyScope.BottleStack) != 0)
+        {
+            shared.m_maxStackSize = Math.Max(1, target.Config.BottleStack.Value);
+        }
+
+        if ((itemScope & ApplyScope.BottleTeleportable) != 0)
+        {
+            shared.m_teleportable = target.Config.BottleTeleportable.Value == BottleShipsPlugin.Toggle.On;
+        }
     }
 
-    private static void ApplyBottleRecipe(BottleTarget target)
+    private static void ApplyBottleRecipe(BottleTarget target, ApplyScope scope)
     {
+        ApplyScope recipeScope = scope & ApplyScope.BottleRecipe;
         BottleConfig? config = target.Config;
-        if (config == null)
+        if (recipeScope == ApplyScope.None || config == null)
         {
             return;
         }
 
         string recipeName = "Recipe_" + target.BottlePrefab;
-        if (config.BottleRecipeEnabled.Value != BottleShipsPlugin.Toggle.On)
+        bool hasOwnedRecipe = OwnedRecipes.TryGetValue(recipeName, out Recipe? ownedRecipe) &&
+                              ownedRecipe != null;
+        if (!hasOwnedRecipe)
         {
-            DisableRecipe(recipeName);
+            OwnedRecipes.Remove(recipeName);
+        }
+
+        bool configuredEnabled = config.BottleRecipeEnabled.Value == BottleShipsPlugin.Toggle.On;
+        if (!hasOwnedRecipe && !configuredEnabled)
+        {
             return;
         }
 
-        ItemDrop? item = ResolveItemDrop(target.BottlePrefab);
-        if (item == null)
+        bool fullRecipeApply = recipeScope == ApplyScope.BottleRecipe;
+        bool initializeAll = !hasOwnedRecipe;
+        bool applyCore = initializeAll || fullRecipeApply;
+        bool applyEnabled = initializeAll ||
+                            fullRecipeApply ||
+                            (recipeScope & ApplyScope.BottleRecipeEnabled) != 0;
+        bool applyStation = initializeAll ||
+                            fullRecipeApply ||
+                            (recipeScope & ApplyScope.BottleRecipeStation) != 0;
+        bool applyResources = initializeAll ||
+                              fullRecipeApply ||
+                              (recipeScope & ApplyScope.BottleRecipeResources) != 0;
+
+        ItemDrop? item = null;
+        if (applyCore)
         {
-            WarnOnce($"Could not apply recipe '{recipeName}': bottle item '{target.BottlePrefab}' was not found.");
-            return;
+            item = ResolveItemDrop(target.BottlePrefab);
+            if (item == null)
+            {
+                WarnOnce($"Could not apply recipe '{recipeName}': bottle item '{target.BottlePrefab}' was not found.");
+                return;
+            }
         }
 
-        if (!TryParseCraftingStationWithLevel(config.BottleRecipeStation.Value, out string recipeStation, out int recipeStationLevel))
+        CraftingStation? station = null;
+        string recipeStation = "None";
+        int recipeStationLevel = 1;
+        bool stationValid = true;
+        if (applyStation &&
+            !TryParseCraftingStationWithLevel(
+                config.BottleRecipeStation.Value,
+                out recipeStation,
+                out recipeStationLevel))
         {
+            stationValid = false;
             WarnOnce($"Could not apply recipe '{recipeName}': invalid recipe station '{config.BottleRecipeStation.Value}'.");
-            return;
         }
-
-        if (!TryResolveCraftingStation(recipeStation, out CraftingStation? station))
+        else if (applyStation && !TryResolveCraftingStation(recipeStation, out station))
         {
+            stationValid = false;
             WarnOnce($"Could not apply recipe '{recipeName}': crafting station '{recipeStation}' was not found.");
-            return;
         }
 
-        if (!TryParseRequirements(config.BottleRecipeResources.Value, out Piece.Requirement[] requirements))
+        Piece.Requirement[] requirements = Array.Empty<Piece.Requirement>();
+        bool resourcesValid = true;
+        if (applyResources &&
+            !TryParseRequirements(config.BottleRecipeResources.Value, out requirements))
         {
+            resourcesValid = false;
             WarnOnce($"Could not apply recipe '{recipeName}': invalid resources '{config.BottleRecipeResources.Value}'.");
+        }
+
+        if (applyCore && (!stationValid || !resourcesValid))
+        {
+            if (applyEnabled &&
+                hasOwnedRecipe &&
+                ownedRecipe != null &&
+                !configuredEnabled)
+            {
+                ownedRecipe.m_enabled = false;
+            }
+
             return;
         }
 
@@ -296,65 +384,105 @@ internal static class BottleShipsManager
             return;
         }
 
-        recipe.m_item = item;
-        recipe.m_amount = 1;
-        recipe.m_enabled = true;
-        recipe.m_craftingStation = station;
-        recipe.m_minStationLevel = recipeStationLevel;
-        recipe.m_requireOnlyOneIngredient = false;
-        recipe.m_qualityResultAmountMultiplier = 1f;
-        recipe.m_resources = requirements;
+        if (applyCore)
+        {
+            recipe.m_item = item;
+            recipe.m_amount = 1;
+            recipe.m_requireOnlyOneIngredient = false;
+            recipe.m_qualityResultAmountMultiplier = 1f;
+        }
+
+        if (applyEnabled)
+        {
+            recipe.m_enabled = configuredEnabled;
+        }
+
+        if (applyStation && stationValid)
+        {
+            recipe.m_craftingStation = station;
+            recipe.m_minStationLevel = recipeStationLevel;
+        }
+
+        if (applyResources && resourcesValid)
+        {
+            recipe.m_resources = requirements;
+        }
     }
 
-    private static void ApplyPiece(BottleTarget target, IReadOnlyList<Piece> livePieces)
+    private static void ApplyPiece(
+        BottleTarget target,
+        IReadOnlyList<Piece> livePieces,
+        ApplyScope scope)
     {
-        Piece? piece = ResolvePiece(target.PiecePrefab);
-        if (piece == null || target.Config == null)
+        ApplyScope pieceScope = scope & ApplyScope.Piece;
+        if (pieceScope == ApplyScope.None || target.Config == null)
         {
             return;
         }
 
-        ApplyPieceConfig(target, piece);
-        ApplyBatteringRamPrefabSize(target, piece);
+        Piece? piece = ResolvePiece(target.PiecePrefab);
+        if (piece == null)
+        {
+            WarnOnce($"Could not apply piece '{target.PiecePrefab}': prefab was not found.");
+            return;
+        }
+
+        PieceBaseline baseline = GetOrCapturePieceBaseline(target, piece);
+        ApplyScope configScope = pieceScope & ApplyScope.PieceConfig;
+        if (configScope != ApplyScope.None)
+        {
+            ApplyPieceConfig(target, piece, baseline, configScope);
+        }
+
+        if ((pieceScope & ApplyScope.BatteringRamSize) != 0)
+        {
+            ApplyBatteringRamPrefabSize(target, piece, baseline);
+        }
+
+        if (configScope == ApplyScope.None)
+        {
+            return;
+        }
 
         foreach (Piece instance in livePieces)
         {
-            if (instance == null || !PrefabNameEquals(instance.gameObject, target.PiecePrefab))
+            if (instance != null && PrefabNameEquals(instance.gameObject, target.PiecePrefab))
             {
-                continue;
+                ApplyPieceConfig(target, instance, baseline, configScope);
             }
-
-            ApplyPieceConfig(target, instance);
         }
     }
 
-    private static void ApplyPieceConfig(BottleTarget target, Piece piece)
+    private static void ApplyPieceConfig(
+        BottleTarget target,
+        Piece piece,
+        PieceBaseline baseline,
+        ApplyScope scope)
     {
         if (target.Config == null)
         {
             return;
         }
 
-        PieceBaseline? baseline = PieceBaselines.TryGetValue(target.PiecePrefab, out PieceBaseline captured)
-            ? captured
-            : null;
-
-        if (baseline != null)
+        if ((scope & ApplyScope.PieceCanBeRemoved) != 0)
         {
-            piece.m_resources = CloneRequirements(baseline.Resources);
-            piece.m_craftingStation = baseline.CraftingStation;
-            piece.m_canBeRemoved = baseline.CanBeRemoved;
+            piece.m_canBeRemoved = target.Config.CanBeRemoved.Value == BottleShipsPlugin.Toggle.On;
         }
 
-        piece.m_canBeRemoved = target.Config.CanBeRemoved.Value == BottleShipsPlugin.Toggle.On;
-
-        if (!ApplyBuildStation(piece, target.Config.BuildStation.Value, baseline))
+        if ((scope & ApplyScope.PieceStation) != 0 &&
+            !ApplyBuildStation(piece, target.Config.BuildStation.Value, baseline))
         {
             WarnOnce($"Could not apply piece '{target.PiecePrefab}': build station '{target.Config.BuildStation.Value}' was not found.");
         }
 
+        if ((scope & ApplyScope.PieceResources) == 0)
+        {
+            return;
+        }
+
         if (target.Config.UseOriginalBuildRecipe.Value == BottleShipsPlugin.Toggle.On)
         {
+            piece.m_resources = CloneRequirements(baseline.Resources);
             return;
         }
 
@@ -367,11 +495,13 @@ internal static class BottleShipsManager
         piece.m_resources = requirements;
     }
 
-    private static void ApplyBatteringRamPrefabSize(BottleTarget target, Piece prefabPiece)
+    private static void ApplyBatteringRamPrefabSize(
+        BottleTarget target,
+        Piece prefabPiece,
+        PieceBaseline baseline)
     {
         if (!string.Equals(target.PiecePrefab, BatteringRamPrefab, StringComparison.OrdinalIgnoreCase) ||
             target.Config?.BatteringRamSize == null ||
-            !PieceBaselines.TryGetValue(target.PiecePrefab, out PieceBaseline baseline) ||
             baseline.BatteringRam == null)
         {
             return;
@@ -381,16 +511,36 @@ internal static class BottleShipsManager
         baseline.BatteringRam.Apply(prefabPiece.gameObject, size);
     }
 
-    private static bool ApplyBuildStation(Piece piece, string value, PieceBaseline? baseline)
+    private static void PrepareBaselineScene()
+    {
+        ZNetScene currentScene = ZNetScene.instance;
+        if (BaselineScene == currentScene)
+        {
+            return;
+        }
+
+        PieceBaselines.Clear();
+        WarnedMessages.Clear();
+        BaselineScene = currentScene;
+    }
+
+    private static PieceBaseline GetOrCapturePieceBaseline(BottleTarget target, Piece prefabPiece)
+    {
+        if (PieceBaselines.TryGetValue(target.PiecePrefab, out PieceBaseline baseline))
+        {
+            return baseline;
+        }
+
+        baseline = PieceBaseline.From(prefabPiece);
+        PieceBaselines[target.PiecePrefab] = baseline;
+        return baseline;
+    }
+
+    private static bool ApplyBuildStation(Piece piece, string value, PieceBaseline baseline)
     {
         string normalized = NormalizePrefabName(value);
         if (string.Equals(normalized, OriginalStationValue, StringComparison.OrdinalIgnoreCase))
         {
-            if (baseline == null)
-            {
-                return false;
-            }
-
             piece.m_craftingStation = baseline.CraftingStation;
             return true;
         }
@@ -444,14 +594,6 @@ internal static class BottleShipsManager
         ObjectDB.instance.m_recipes.Add(recipe);
         OwnedRecipes[recipeName] = recipe;
         return recipe;
-    }
-
-    private static void DisableRecipe(string recipeName)
-    {
-        if (OwnedRecipes.TryGetValue(recipeName, out Recipe? recipe) && recipe != null)
-        {
-            recipe.m_enabled = false;
-        }
     }
 
     private static bool TryParseRequirements(string definition, out Piece.Requirement[] requirements)
@@ -802,21 +944,27 @@ internal static class BottleShipsManager
             return config;
         }
 
-        internal void AddChangedHandler(Action handler)
+        internal void AddChangedHandlers(Action<ApplyScope> handler)
         {
-            UseOriginalBuildRecipe.SettingChanged += (_, _) => handler();
-            BuildStation.SettingChanged += (_, _) => handler();
-            CanBeRemoved.SettingChanged += (_, _) => handler();
-            BuildResources.SettingChanged += (_, _) => handler();
-            BottleWeight.SettingChanged += (_, _) => handler();
-            BottleStack.SettingChanged += (_, _) => handler();
-            BottleTeleportable.SettingChanged += (_, _) => handler();
-            BottleRecipeEnabled.SettingChanged += (_, _) => handler();
-            BottleRecipeStation.SettingChanged += (_, _) => handler();
-            BottleRecipeResources.SettingChanged += (_, _) => handler();
+            UseOriginalBuildRecipe.SettingChanged += (_, _) => handler(ApplyScope.PieceResources);
+            BuildStation.SettingChanged += (_, _) => handler(ApplyScope.PieceStation);
+            CanBeRemoved.SettingChanged += (_, _) => handler(ApplyScope.PieceCanBeRemoved);
+            BuildResources.SettingChanged += (_, _) =>
+            {
+                if (UseOriginalBuildRecipe.Value == BottleShipsPlugin.Toggle.Off)
+                {
+                    handler(ApplyScope.PieceResources);
+                }
+            };
+            BottleWeight.SettingChanged += (_, _) => handler(ApplyScope.BottleWeight);
+            BottleStack.SettingChanged += (_, _) => handler(ApplyScope.BottleStack);
+            BottleTeleportable.SettingChanged += (_, _) => handler(ApplyScope.BottleTeleportable);
+            BottleRecipeEnabled.SettingChanged += (_, _) => handler(ApplyScope.BottleRecipeEnabled);
+            BottleRecipeStation.SettingChanged += (_, _) => handler(ApplyScope.BottleRecipeStation);
+            BottleRecipeResources.SettingChanged += (_, _) => handler(ApplyScope.BottleRecipeResources);
             if (BatteringRamSize != null)
             {
-                BatteringRamSize.SettingChanged += (_, _) => handler();
+                BatteringRamSize.SettingChanged += (_, _) => handler(ApplyScope.BatteringRamSize);
             }
         }
     }
@@ -825,7 +973,6 @@ internal static class BottleShipsManager
     {
         internal Piece.Requirement[] Resources = Array.Empty<Piece.Requirement>();
         internal CraftingStation? CraftingStation;
-        internal bool CanBeRemoved;
         internal BatteringRamSizeBaseline? BatteringRam;
 
         internal static PieceBaseline From(Piece piece)
@@ -834,7 +981,6 @@ internal static class BottleShipsManager
             {
                 Resources = CloneRequirements(piece.m_resources ?? Array.Empty<Piece.Requirement>()),
                 CraftingStation = piece.m_craftingStation,
-                CanBeRemoved = piece.m_canBeRemoved,
                 BatteringRam = PrefabNameEquals(piece.gameObject, BatteringRamPrefab)
                     ? BatteringRamSizeBaseline.From(piece.gameObject)
                     : null
@@ -1001,9 +1147,10 @@ internal static class BottleShipsManager
 internal static class BottleShipsObjectDbAwakePatch
 {
     [HarmonyPriority(Priority.Last)]
+    [HarmonyBefore("sighsorry.DataForge")]
     private static void Postfix()
     {
-        BottleShipsManager.QueueApply();
+        BottleShipsManager.ApplyDefaultsOrRetry();
     }
 }
 
@@ -1011,8 +1158,9 @@ internal static class BottleShipsObjectDbAwakePatch
 internal static class BottleShipsZNetSceneAwakePatch
 {
     [HarmonyPriority(Priority.Last)]
+    [HarmonyBefore("sighsorry.DataForge")]
     private static void Postfix()
     {
-        BottleShipsManager.QueueApply();
+        BottleShipsManager.ApplyDefaultsOrRetry();
     }
 }

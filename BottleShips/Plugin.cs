@@ -16,7 +16,7 @@ namespace BottleShips
     public class BottleShipsPlugin : BaseUnityPlugin
     {
         internal const string ModName = "BottleShips";
-        internal const string ModVersion = "1.1.4";
+        internal const string ModVersion = "1.1.5";
         internal const string Author = "sighsorry";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
@@ -87,7 +87,7 @@ namespace BottleShips
 
             Assembly assembly = Assembly.GetExecutingAssembly();
             _harmony.PatchAll(assembly);
-            BottleShipsManager.QueueApply();
+            BottleShipsManager.ApplyDefaultsOrRetry();
             SetupWatcher();
         }
 

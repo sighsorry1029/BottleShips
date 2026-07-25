@@ -197,11 +197,12 @@ internal static class BottleAssetObjectDBAwakePatch
 internal static class BottleAssetObjectDBCopyOtherDBPatch
 {
     [HarmonyPriority(Priority.Last)]
+    [HarmonyBefore("sighsorry.DataForge")]
     private static void Postfix(ObjectDB __instance)
     {
         BottleAssetManager.RegisterWithObjectDB(__instance);
         __instance.UpdateRegisters();
-        BottleShipsManager.QueueApply();
+        BottleShipsManager.ApplyDefaultsOrRetry();
     }
 }
 
