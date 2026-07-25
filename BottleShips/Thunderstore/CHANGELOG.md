@@ -2,9 +2,12 @@
 
 ## 1.1.4
 
-- Added cooperative Power Paddling for the helmsman and seated passengers. Each active player holds Run, consumes a base 10 stamina per second, contributes 50% additional paddling force at Back, Slow, Half, or Full, and receives a smooth 10-degree FOV increase.
+- Added configurable cooperative Power Paddling for the helmsman and seated passengers. Each active player holds Run, consumes a base 10 stamina per second, contributes the configured share of paddling force at Back, Slow, Half, or Full, and receives an individual smooth 10-degree FOV increase. `Power Paddling Bonus Per Player` defaults to `0.5`, accepts `0-1`, and is disabled at `0`.
 - Simplified ship configuration by applying tweaks to every `Ship` component and replacing the separate scope, sailing, paddling, steering, and passive passenger-bonus settings with `Ship Power Multiplier`. Removed legacy keys are ignored.
-- Made the default `Camera Max Distance = 6` a no-op so other camera and ship mods retain control until a larger distance is configured.
+- Removed `Camera Max Distance` and its distance patches so BottleShips no longer controls ship camera zoom.
+- Added field ship repair outside the required build-station range. Repairs consume one Wood per configured amount of missing durability, rounded up; `Build Station = None` ships use a Workbench as the repair fallback. `Ship Repair Durability Per Wood` defaults to `200`, accepts `0-1000`, and is disabled at `0`.
+- Added a hammer-hover Wood requirement indicator with corrected orientation and a large centered amount while preserving the vanilla durability-bar display conditions.
+- Reordered the Configuration Manager display to `01 - General`, `02 - Ship Tweaks`, then bottle sections `03-13` without changing persisted config identities.
 - Required BottleShips on both the server and connecting clients to prevent network-prefab and ownership mismatches.
 - Deferred database-triggered configuration application to a next-frame, coalesced worker and isolated apply failures so late initialization and transient prefab errors do not disrupt the game lifecycle.
 

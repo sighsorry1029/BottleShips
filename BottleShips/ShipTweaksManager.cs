@@ -12,7 +12,6 @@ internal static class ShipTweaksManager
     private const string ConfigGroup = "20 - Ship Tweaks";
     private const string RockTheBoatGuid = "shudnal.RockTheBoat";
     private const string PowerPaddlingRpc = "sighsorry.BottleShips.SetPowerPaddling";
-    private const float PowerPaddlingForcePerPlayer = 0.5f;
     private const float PowerPaddlingStaminaPerSecond = 10f;
     private const float PowerPaddlingFovIncrease = 10f;
     private const float PowerPaddlingHeartbeatInterval = 0.2f;
@@ -24,10 +23,9 @@ internal static class ShipTweaksManager
     private static readonly Dictionary<Ship, PowerPaddlingPhysicsContext> PowerPaddlingPhysicsContexts = new();
     private static readonly List<long> InvalidPowerPaddlingSenders = new();
 
-    private static ConfigEntry<float> _cameraMaxDistance = null!;
     private static ConfigEntry<float> _exploreRadiusMultiplier = null!;
     private static ConfigEntry<float> _shipPowerMultiplier = null!;
-    private static ConfigEntry<BottleShipsPlugin.Toggle> _enablePowerPaddling = null!;
+    private static ConfigEntry<float> _powerPaddlingBonusPerPlayer = null!;
     private static bool _rockTheBoatChecked;
     private static bool _rockTheBoatInstalled;
     private static bool _rockTheBoatWarningLogged;
@@ -38,15 +36,6 @@ internal static class ShipTweaksManager
 
     internal static void BindConfig(BottleShipsPlugin plugin)
     {
-        _cameraMaxDistance = plugin.config(
-            ConfigGroup,
-            "Camera Max Distance",
-            6f,
-            new ConfigDescription(
-                "Maximum camera zoom distance while controlling, standing on, or inside a ship. The vanilla default is 6; at 6 BottleShips does not patch camera distance, allowing another camera mod to keep control.",
-                new AcceptableValueRange<float>(6f, 100f)),
-            synchronizedSetting: false,
-            order: 1000);
         _exploreRadiusMultiplier = plugin.config(
             ConfigGroup,
             "Explore Radius Multiplier",
@@ -54,7 +43,7 @@ internal static class ShipTweaksManager
             new ConfigDescription(
                 "Multiplier for the minimap exploration radius while controlling, standing on, or inside a ship.",
                 new AcceptableValueRange<float>(0.1f, 10f)),
-            order: 990);
+            order: 1000);
         _shipPowerMultiplier = plugin.config(
             ConfigGroup,
             "Ship Power Multiplier",
@@ -62,43 +51,16 @@ internal static class ShipTweaksManager
             new ConfigDescription(
                 "Multiplier for wind-driven force at Half or Full and manual propulsion at Slow or Back. It also scales paddle steering at Slow or Back, but not speed-based steering or rudder response. This mainly changes acceleration rather than setting top speed directly. 1 is vanilla; 0 removes these propulsion forces and paddle steering.",
                 new AcceptableValueRange<float>(0f, 5f)),
-            order: 980);
-        _enablePowerPaddling = plugin.config(
+            order: 990);
+        _powerPaddlingBonusPerPlayer = plugin.config(
             ConfigGroup,
-            "Enable Power Paddling",
-            BottleShipsPlugin.Toggle.Off,
-            "If on, the helmsman and passengers seated in ship chairs can hold the Run input to power paddle. Each active player consumes a base 10 stamina per second and adds 50% of the ship's paddling force at Back, Slow, Half, or Full; merely sitting aboard adds nothing. At Half or Full this is separate rowing thrust and does not multiply wind force. The active player's camera field of view smoothly increases by up to 10 degrees.",
-            order: 970);
-        _enablePowerPaddling.SettingChanged += (_, _) => HandlePowerPaddlingConfigChanged();
-    }
-
-    internal static bool TryApplyCameraDistance(GameCamera camera, out CameraDistanceState state)
-    {
-        state = default;
-        float maxDistance = GetFiniteValue(_cameraMaxDistance, 6f);
-        if (maxDistance <= 6f
-            || maxDistance <= camera.m_minDistance
-            || !TryGetAffectedLocalShip(Player.m_localPlayer, out _))
-        {
-            return false;
-        }
-
-        state = new CameraDistanceState(camera.m_maxDistance, camera.m_maxDistanceBoat);
-        camera.m_maxDistance = maxDistance;
-        camera.m_maxDistanceBoat = maxDistance;
-        return true;
-    }
-
-    internal static void RestoreCameraDistance(GameCamera camera, ref CameraDistanceState state)
-    {
-        if (!state.Active)
-        {
-            return;
-        }
-
-        camera.m_maxDistance = state.MaxDistance;
-        camera.m_maxDistanceBoat = state.MaxDistanceBoat;
-        state.Active = false;
+            "Power Paddling Bonus Per Player",
+            0.5f,
+            new ConfigDescription(
+                "Additional paddling-force ratio contributed by each helmsman or seated passenger who holds the Run input and spends a base 10 stamina per second. 0.5 adds 50% of the ship's globally scaled paddling force per active player at Back, Slow, Half, or Full; merely sitting aboard adds nothing. At Half or Full this is separate rowing thrust and does not multiply wind force. 0 disables Power Paddling. Each active player's own camera field of view smoothly increases by up to 10 degrees; other paddlers do not stack additional FOV on that player.",
+                new AcceptableValueRange<float>(0f, 1f)),
+            order: 980);
+        _powerPaddlingBonusPerPlayer.SettingChanged += (_, _) => HandlePowerPaddlingConfigChanged();
     }
 
     internal static bool TryApplyExploreRadius(Minimap minimap, Player player, out ExploreRadiusState state)
@@ -148,7 +110,8 @@ internal static class ShipTweaksManager
 
         float shipPowerMultiplier = GetFiniteValue(_shipPowerMultiplier, 1f);
         int activePaddlers = CountActivePowerPaddlers(ship);
-        float powerPaddlingBonus = activePaddlers * PowerPaddlingForcePerPlayer;
+        float powerPaddlingBonus =
+            activePaddlers * GetFiniteValue(_powerPaddlingBonusPerPlayer, 0.5f);
         if (Mathf.Approximately(shipPowerMultiplier, 1f) && powerPaddlingBonus <= 0f)
         {
             return false;
@@ -328,7 +291,8 @@ internal static class ShipTweaksManager
     }
 
     private static bool PowerPaddlingEnabled =>
-        _enablePowerPaddling != null && _enablePowerPaddling.Value == BottleShipsPlugin.Toggle.On;
+        _powerPaddlingBonusPerPlayer != null
+        && GetFiniteValue(_powerPaddlingBonusPerPlayer, 0.5f) > 0f;
 
     private static void HandlePowerPaddlingConfigChanged()
     {
@@ -642,7 +606,7 @@ internal static class ShipTweaksManager
         {
             _rockTheBoatWarningLogged = true;
             BottleShipsPlugin.BottleShipsLogger.LogWarning(
-                "RockTheBoat is installed. BottleShips ship tweaks are disabled to prevent duplicate camera, minimap, and ship physics patches.");
+                "RockTheBoat is installed. BottleShips minimap, handling, and Power Paddling tweaks are disabled to prevent duplicate ship patches.");
         }
 
         return _rockTheBoatInstalled;
@@ -678,20 +642,6 @@ internal static class ShipTweaksManager
         }
     }
 
-    internal struct CameraDistanceState
-    {
-        internal bool Active;
-        internal readonly float MaxDistance;
-        internal readonly float MaxDistanceBoat;
-
-        internal CameraDistanceState(float maxDistance, float maxDistanceBoat)
-        {
-            Active = true;
-            MaxDistance = maxDistance;
-            MaxDistanceBoat = maxDistanceBoat;
-        }
-    }
-
     internal struct ExploreRadiusState
     {
         internal bool Active;
@@ -721,32 +671,6 @@ internal static class ShipTweaksManager
             BackwardForce = backwardForce;
             SteeringForce = steeringForce;
         }
-    }
-}
-
-[HarmonyPatch(typeof(GameCamera), nameof(GameCamera.UpdateCamera), typeof(float))]
-internal static class BottleShipsGameCameraUpdateCameraPatch
-{
-    [HarmonyPriority(Priority.Last)]
-    private static void Prefix(GameCamera __instance, out ShipTweaksManager.CameraDistanceState __state)
-    {
-        ShipTweaksManager.TryApplyCameraDistance(__instance, out __state);
-    }
-
-    [HarmonyPriority(Priority.First)]
-    private static void Postfix(GameCamera __instance, ref ShipTweaksManager.CameraDistanceState __state)
-    {
-        ShipTweaksManager.RestoreCameraDistance(__instance, ref __state);
-    }
-
-    [HarmonyPriority(Priority.First)]
-    private static Exception? Finalizer(
-        GameCamera __instance,
-        Exception? __exception,
-        ref ShipTweaksManager.CameraDistanceState __state)
-    {
-        ShipTweaksManager.RestoreCameraDistance(__instance, ref __state);
-        return __exception;
     }
 }
 

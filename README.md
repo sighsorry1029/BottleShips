@@ -84,12 +84,12 @@ Ship tweaks apply to every object with a `Ship` component, including ships added
 
 Ship tweak options:
 
-* `Camera Max Distance`: absolute maximum camera zoom distance while controlling, standing on, or inside a ship. Default: `6`, the vanilla value. At `6`, BottleShips does not patch camera distance, allowing another camera mod to keep control. Client-only.
 * `Explore Radius Multiplier`: multiplies minimap exploration radius while aboard a ship. Default: `1`.
 * `Ship Power Multiplier`: scales wind-driven force at Half or Full and manual propulsion plus paddle steering at Slow or Back. It does not multiply speed-based steering or directly set top speed. Default: `1`.
-* `Enable Power Paddling`: the helmsman and passengers seated in ship chairs can each hold Run to consume a base 10 stamina per second and add 50% of the ship's globally scaled paddling force. Passive occupants add nothing. It works at Back, Slow, Half, and Full; at Half or Full the rowing force is added separately without multiplying wind force. Each active paddler gets a smooth `+10` camera FOV effect. Default: `Off`.
+* `Power Paddling Bonus Per Player`: the helmsman and passengers seated in ship chairs can each hold Run to consume a base 10 stamina per second and add the configured share of the ship's globally scaled paddling force. Passive occupants add nothing. It works at Back, Slow, Half, and Full; at Half or Full the rowing force is added separately without multiplying wind force. Each active paddler gets a smooth `+10` effect on their own camera FOV; other paddlers do not stack additional FOV on that player. Default: `0.5` (50% per active player). Range: `0-1`, where `0` disables Power Paddling.
+* `Ship Repair Durability Per Wood`: allows the repairing player to fully repair a ship outside its required build-station range by spending one Wood per configured amount of missing durability, rounded up. Station range is checked from the player's position. The configured build station is used when present; ships with `Build Station = None` use a Workbench as the repair-station fallback. Repairs within range remain free. While the hammer's repair piece is selected and a damaged field-repairable ship is targeted, the required amount is centered over the Wood icon beside the vanilla durability bar. Default: `200`. Range: `0-1000`, where `0` disables this feature and preserves vanilla repair behavior.
 
-BottleShips disables its ship tweaks when RockTheBoat is installed to avoid applying the same camera, minimap, and ship physics changes twice.
+BottleShips disables its minimap, handling, and Power Paddling tweaks when RockTheBoat is installed to avoid applying the same features twice. Field ship repair remains available.
 
 Each bottle section can configure:
 

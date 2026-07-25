@@ -81,8 +81,9 @@ namespace BottleShips
                 BottleAssetManager.RegisterBottleItem("bottleasset", bottleItem);
             }
 
-            BottleShipsManager.BindConfig(this);
             ShipTweaksManager.BindConfig(this);
+            ShipRepairManager.BindConfig(this);
+            BottleShipsManager.BindConfig(this);
 
             Assembly assembly = Assembly.GetExecutingAssembly();
             _harmony.PatchAll(assembly);
@@ -103,6 +104,7 @@ namespace BottleShips
             }
 
             ShipTweaksManager.Shutdown();
+            ShipRepairManager.Shutdown();
             _harmony.UnpatchSelf();
             _quickCartAttachWindowTarget = null;
             _quickCartAttachWindowUntil = float.NegativeInfinity;
@@ -376,13 +378,16 @@ namespace BottleShips
             bool synchronizedSetting = true, int? order = null)
         {
             object[] tags = description.Tags ?? Array.Empty<object>();
-            if (order != null)
+            object[] orderedTags = new object[tags.Length + 1];
+            Array.Copy(tags, orderedTags, tags.Length);
+            string category = GetConfigurationManagerCategory(group);
+            orderedTags[tags.Length] = new ConfigurationManagerAttributes
             {
-                object[] orderedTags = new object[tags.Length + 1];
-                Array.Copy(tags, orderedTags, tags.Length);
-                orderedTags[tags.Length] = new ConfigurationManagerAttributes { Order = order.Value };
-                tags = orderedTags;
-            }
+                Category = category,
+                CategoryOrder = GetConfigurationManagerCategoryOrder(category),
+                Order = order
+            };
+            tags = orderedTags;
 
             ConfigDescription extendedDescription =
                 new(
@@ -403,9 +408,37 @@ namespace BottleShips
             return config(group, name, value, new ConfigDescription(description), synchronizedSetting, order);
         }
 
+        private static string GetConfigurationManagerCategory(string group)
+        {
+            if (string.Equals(group, "20 - Ship Tweaks", StringComparison.Ordinal))
+            {
+                return "02 - Ship Tweaks";
+            }
+
+            if (group.Length >= 2
+                && int.TryParse(group.Substring(0, 2), out int section)
+                && section >= 2
+                && section <= 12)
+            {
+                return $"{section + 1:00}{group.Substring(2)}";
+            }
+
+            return group;
+        }
+
+        private static int? GetConfigurationManagerCategoryOrder(string category)
+        {
+            return category.Length >= 2
+                   && int.TryParse(category.Substring(0, 2), out int section)
+                ? 1000 - section
+                : null;
+        }
+
         private sealed class ConfigurationManagerAttributes
         {
-            public int? Order = null;
+            public string? Category { get; set; }
+            public int? CategoryOrder { get; set; }
+            public int? Order { get; set; }
         }
 
         internal struct QuickCartDistanceState
