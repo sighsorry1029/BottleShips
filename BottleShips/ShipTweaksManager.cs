@@ -57,7 +57,7 @@ internal static class ShipTweaksManager
             "Power Paddling Bonus Per Player",
             0.5f,
             new ConfigDescription(
-                "Additional paddling-force ratio contributed by each helmsman or seated passenger who holds the Run input and spends a base 10 stamina per second. 0.5 adds 50% of the ship's globally scaled paddling force per active player at Back, Slow, Half, or Full; merely sitting aboard adds nothing. At Half or Full this is separate rowing thrust and does not multiply wind force. 0 disables Power Paddling. Each active player's own camera field of view smoothly increases by up to 10 degrees; other paddlers do not stack additional FOV on that player.",
+                "Additional paddling-force ratio contributed by each helmsman or seated passenger who holds the Run input and spends a base 10 stamina per second. 0.5 adds 50% of the ship's globally scaled paddling force per active player at Back or Slow; merely sitting aboard adds nothing. Power Paddling is unavailable at Half or Full while the sails are deployed. 0 disables Power Paddling. Each active player's own camera field of view smoothly increases by up to 10 degrees; other paddlers do not stack additional FOV on that player.",
                 new AcceptableValueRange<float>(0f, 1f)),
             order: 980);
         _powerPaddlingBonusPerPlayer.SettingChanged += (_, _) => HandlePowerPaddlingConfigChanged();
@@ -426,9 +426,7 @@ internal static class ShipTweaksManager
     private static bool IsPowerPaddlingGear(Ship ship)
     {
         return ship.m_speed == Ship.Speed.Back
-               || ship.m_speed == Ship.Speed.Slow
-               || ship.m_speed == Ship.Speed.Half
-               || ship.m_speed == Ship.Speed.Full;
+               || ship.m_speed == Ship.Speed.Slow;
     }
 
     private static void SetLocalPowerPaddlingRequest(Ship? ship, bool requested)

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.6
+
+- Restricted Power Paddling to the paddle-driven Back and Slow gears. Half and Full now use sail propulsion without consuming paddlers' stamina, adding rowing force, or applying the Power Paddling FOV effect.
+
 ## 1.1.5
 
 - Added field ship repair outside the required build-station range. Repairs consume one Wood per configured amount of missing durability, rounded up; `Build Station = None` ships use a Workbench as the repair fallback. `Ship Repair Durability Per Wood` defaults to `200`, accepts `0-1000`, and is disabled at `0`.
