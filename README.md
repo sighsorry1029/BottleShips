@@ -77,7 +77,7 @@ General options:
 
 * `Extended Cart Interaction`: client-only toggle that expands the cart's normal Use interaction to nearby carts without adding a separate hotkey or tooltip. Default: `On`.
 * `Troll Trap Auto Reload Seconds`: automatically rearms `piece_trap_troll` after it triggers. Default: `5`. Range: `0-10`, where `0` disables it.
-* `Ballista Targeting Tweaks`: trophy targets are prioritized, but the ballista can still attack other valid enemies. Players are never selected as targets.
+* `Ballista Targeting Tweaks`: trophy targets are prioritized, but the ballista can still attack other valid enemies. Players, tamed creatures, and creatures in the `PlayerSpawned` faction are never selected as targets.
 * `Battering Ram Size`: scales newly placed battering rams. Default: `0.75`. Range: `0.5-1`. Existing placed battering rams are not changed.
 
 Ship tweaks apply to every object with a `Ship` component, including ships added by other mods.

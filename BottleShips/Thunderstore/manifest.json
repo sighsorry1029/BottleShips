@@ -1,6 +1,6 @@
 {
   "name": "BottleShips",
-  "version_number": "1.1.6",
+  "version_number": "1.1.7",
   "website_url": "https://discord.gg/mbkPcvu9ax",
   "description": "Adds bottle items for ships and carts. Build full-size pieces from bottles, tune recipes and stations, quick-attach carts, auto-reload troll traps, resize battering rams, and improve ballista targeting.",
   "dependencies": [

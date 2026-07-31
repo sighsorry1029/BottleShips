@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.7
+
+- Expanded `Ballista Targeting Tweaks` protection to players, tamed creatures, and `PlayerSpawned`-faction creatures across normal selection, trophy fallback, and network target assignment while continuing to select valid enemies behind protected targets.
+
 ## 1.1.6
 
 - Restricted Power Paddling to the paddle-driven Back and Slow gears. Half and Full now use sail propulsion without consuming paddlers' stamina, adding rowing force, or applying the Power Paddling FOV effect.

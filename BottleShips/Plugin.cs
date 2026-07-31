@@ -16,7 +16,7 @@ namespace BottleShips
     public class BottleShipsPlugin : BaseUnityPlugin
     {
         internal const string ModName = "BottleShips";
-        internal const string ModVersion = "1.1.6";
+        internal const string ModVersion = "1.1.7";
         internal const string Author = "sighsorry";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
@@ -73,7 +73,7 @@ namespace BottleShips
                 "01 - General",
                 "Ballista Targeting Tweaks",
                 Toggle.On,
-                "If on, ballista trophies prioritize related targets instead of excluding other targets, and players are never selected as targets.",
+                "If on, ballista trophies prioritize related targets instead of excluding other targets, and players, tamed creatures, and PlayerSpawned-faction creatures are never selected as targets.",
                 order: 970);
 
             foreach (string bottleItem in BottleShipsManager.BottleItemNames)
@@ -151,7 +151,15 @@ namespace BottleShips
         internal static bool BallistaTargetingTweaksEnabled =>
             _ballistaTargetingTweaks != null && _ballistaTargetingTweaks.Value == Toggle.On;
 
-        internal static void RejectBallistaPlayerTarget(ref ZDOID character)
+        internal static bool IsProtectedBallistaTarget(Character? character)
+        {
+            return character != null &&
+                   (character.IsPlayer() ||
+                    character.IsTamed() ||
+                    character.GetFaction() == Character.Faction.PlayerSpawned);
+        }
+
+        internal static void RejectProtectedBallistaTarget(ref ZDOID character)
         {
             if (!BallistaTargetingTweaksEnabled || character == ZDOID.None || ZNetScene.instance == null)
             {
@@ -159,7 +167,10 @@ namespace BottleShips
             }
 
             GameObject targetObject = ZNetScene.instance.FindInstance(character);
-            if (targetObject != null && targetObject.GetComponent<Player>() != null)
+            Character? target = targetObject != null
+                ? targetObject.GetComponent<Character>()
+                : null;
+            if (IsProtectedBallistaTarget(target))
             {
                 character = ZDOID.None;
             }
@@ -541,8 +552,7 @@ namespace BottleShips
             {
                 if (__state.Active &&
                     __instance.m_haveTarget &&
-                    __instance.m_target != null &&
-                    __instance.m_target.IsPlayer() &&
+                    BottleShipsPlugin.IsProtectedBallistaTarget(__instance.m_target) &&
                     __instance.m_nview != null &&
                     __instance.m_nview.IsValid())
                 {
@@ -598,9 +608,6 @@ namespace BottleShips
     [HarmonyPatch(typeof(BaseAI), nameof(BaseAI.FindClosestCreature))]
     internal static class BottleShipsBallistaFindClosestCreaturePatch
     {
-        [ThreadStatic]
-        private static bool _findingFallback;
-
         private static void Postfix(
             Transform me,
             Vector3 eyePoint,
@@ -617,19 +624,34 @@ namespace BottleShips
             ref Character? __result)
         {
             if (!BottleShipsTurretUpdateTargetPatch.IsSelectingTarget ||
-                _findingFallback ||
-                __result != null ||
-                !includeEnemies ||
-                onlyTargets == null ||
-                onlyTargets.Count == 0)
+                !BottleShipsPlugin.BallistaTargetingTweaksEnabled)
             {
                 return;
             }
 
-            try
+            if (BottleShipsPlugin.IsProtectedBallistaTarget(__result))
             {
-                _findingFallback = true;
-                __result = BaseAI.FindClosestCreature(
+                __result = FindClosestSafeCreature(
+                    me,
+                    eyePoint,
+                    hearRange,
+                    viewRange,
+                    viewAngle,
+                    alerted,
+                    mistVision,
+                    passiveAggresive,
+                    includePlayers,
+                    includeTamed,
+                    includeEnemies,
+                    onlyTargets);
+            }
+
+            if (__result == null &&
+                includeEnemies &&
+                onlyTargets != null &&
+                onlyTargets.Count > 0)
+            {
+                __result = FindClosestSafeCreature(
                     me,
                     eyePoint,
                     hearRange,
@@ -639,14 +661,98 @@ namespace BottleShips
                     mistVision,
                     passiveAggresive,
                     includePlayers: false,
-                    includeTamed: includeTamed,
-                    includeEnemies: includeEnemies,
-                    onlyTargets: new List<Character>());
+                    includeTamed: false,
+                    includeEnemies: true,
+                    onlyTargets: null);
             }
-            finally
+        }
+
+        private static Character? FindClosestSafeCreature(
+            Transform me,
+            Vector3 eyePoint,
+            float hearRange,
+            float viewRange,
+            float viewAngle,
+            bool alerted,
+            bool mistVision,
+            bool passiveAggresive,
+            bool includePlayers,
+            bool includeTamed,
+            bool includeEnemies,
+            List<Character>? onlyTargets)
+        {
+            if (!includeEnemies &&
+                ZoneSystem.instance.GetGlobalKey(GlobalKeys.PassiveMobs))
             {
-                _findingFallback = false;
+                WearNTear? wear = me.GetComponent<WearNTear>();
+                if (wear != null && wear.GetHealthPercentage() == 1f)
+                {
+                    return null;
+                }
             }
+
+            Character? closest = null;
+            float closestDistance = 99999f;
+            foreach (Character candidate in Character.GetAllCharacters())
+            {
+                bool isPlayer = candidate is Player;
+                if ((!includePlayers && isPlayer) ||
+                    (!includeEnemies && !isPlayer) ||
+                    (!includeTamed && candidate.IsTamed()) ||
+                    BottleShipsPlugin.IsProtectedBallistaTarget(candidate))
+                {
+                    continue;
+                }
+
+                if (onlyTargets != null && onlyTargets.Count > 0)
+                {
+                    bool configuredTarget = false;
+                    foreach (Character allowedTarget in onlyTargets)
+                    {
+                        if (candidate.m_name == allowedTarget.m_name)
+                        {
+                            configuredTarget = true;
+                            break;
+                        }
+                    }
+
+                    if (!configuredTarget)
+                    {
+                        continue;
+                    }
+                }
+
+                if (candidate.IsDead())
+                {
+                    continue;
+                }
+
+                BaseAI? candidateAi = candidate.GetBaseAI();
+                if ((candidateAi != null && candidateAi.IsSleeping()) ||
+                    !BaseAI.CanSenseTarget(
+                        me,
+                        eyePoint,
+                        hearRange,
+                        viewRange,
+                        viewAngle,
+                        alerted,
+                        mistVision,
+                        candidate,
+                        passiveAggresive,
+                        isTamed: false))
+                {
+                    continue;
+                }
+
+                float distance = Vector3.Distance(candidate.transform.position, me.position);
+                if (distance < closestDistance || closest == null)
+                {
+                    closest = candidate;
+                    closestDistance = distance;
+                }
+            }
+
+            return closest;
         }
     }
 
@@ -655,7 +761,7 @@ namespace BottleShips
     {
         private static void Prefix(ref ZDOID character)
         {
-            BottleShipsPlugin.RejectBallistaPlayerTarget(ref character);
+            BottleShipsPlugin.RejectProtectedBallistaTarget(ref character);
         }
     }
 }
