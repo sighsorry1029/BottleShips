@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.8
+
+- Added `Ballista Ammo Capacity`, a server-synced `0-1000` setting that raises the vanilla ballista's actual ammunition limit for its hover display and compatible fill-all mods. Existing excess ammunition is preserved when the setting is lowered, owner-side RPCs reject overfill, and large stores are returned in item stacks when the ballista is destroyed.
+- Expanded `Extended Cart Interaction` from carts to valid `Vagon`-based vehicles, including battering rams and catapults.
+- Fixed repeated configuration application progressively shrinking the Battering Ram by preserving its original transform baseline for the process lifetime.
+
 ## 1.1.7
 
 - Expanded `Ballista Targeting Tweaks` protection to players, tamed creatures, and `PlayerSpawned`-faction creatures across normal selection, trophy fallback, and network target assignment while continuing to select valid enemies behind protected targets.

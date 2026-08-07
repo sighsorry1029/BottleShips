@@ -16,7 +16,7 @@ namespace BottleShips
     public class BottleShipsPlugin : BaseUnityPlugin
     {
         internal const string ModName = "BottleShips";
-        internal const string ModVersion = "1.1.7";
+        internal const string ModVersion = "1.1.8";
         internal const string Author = "sighsorry";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
@@ -58,7 +58,7 @@ namespace BottleShips
                 "01 - General",
                 "Extended Cart Interaction",
                 Toggle.On,
-                "Client-only. If on, the cart's normal Use interaction works from a wider nearby area without adding a separate tooltip.",
+                "Client-only. If on, Vagon-based vehicles such as carts, battering rams, and catapults can use their normal attach/detach interaction from a wider nearby area without adding a separate tooltip.",
                 synchronizedSetting: false,
                 order: 990);
             _trollTrapAutoReloadSeconds = config(
@@ -236,7 +236,6 @@ namespace BottleShips
             if (!ExtendedCartInteractionEnabled
                 || player == null
                 || vagon == null
-                || Utils.GetPrefabName(vagon.gameObject) != "Cart"
                 || vagon.m_nview == null
                 || !vagon.m_nview.IsValid()
                 || !vagon.m_nview.IsOwner())
@@ -313,7 +312,9 @@ namespace BottleShips
         {
             distance = float.PositiveInfinity;
             if (vagon == null
-                || Utils.GetPrefabName(vagon.gameObject) != "Cart"
+                || !vagon.isActiveAndEnabled
+                || vagon.m_nview == null
+                || !vagon.m_nview.IsValid()
                 || vagon.m_attachPoint == null
                 || vagon.transform.up.y < 0.1f)
             {
@@ -762,6 +763,24 @@ namespace BottleShips
         private static void Prefix(ref ZDOID character)
         {
             BottleShipsPlugin.RejectProtectedBallistaTarget(ref character);
+        }
+    }
+
+    [HarmonyPatch(typeof(Turret), nameof(Turret.RPC_AddAmmo))]
+    internal static class BottleShipsTurretRpcAddAmmoCapacityPatch
+    {
+        private static bool Prefix(Turret __instance)
+        {
+            return BottleShipsManager.CanReceiveConfiguredBallistaAmmo(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(Turret), nameof(Turret.OnDestroyed))]
+    internal static class BottleShipsTurretOnDestroyedAmmoPatch
+    {
+        private static bool Prefix(Turret __instance)
+        {
+            return !BottleShipsManager.TryDropStackedBallistaAmmo(__instance);
         }
     }
 }

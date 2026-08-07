@@ -13,6 +13,7 @@ internal static class BottleShipsManager
 {
     private const string OriginalStationValue = "Original";
     private const string BatteringRamPrefab = "BatteringRam";
+    private const string BallistaPrefab = "piece_turret";
 
     [Flags]
     private enum ApplyScope
@@ -28,10 +29,12 @@ internal static class BottleShipsManager
         PieceStation = 1 << 7,
         PieceCanBeRemoved = 1 << 8,
         BatteringRamSize = 1 << 9,
+        BallistaAmmoCapacity = 1 << 10,
         BottleItem = BottleWeight | BottleStack | BottleTeleportable,
         BottleRecipe = BottleRecipeEnabled | BottleRecipeStation | BottleRecipeResources,
         PieceConfig = PieceResources | PieceStation | PieceCanBeRemoved,
-        Piece = PieceConfig | BatteringRamSize,
+        LivePiece = PieceConfig | BallistaAmmoCapacity,
+        Piece = LivePiece | BatteringRamSize,
         All = BottleItem | BottleRecipe | Piece,
     }
 
@@ -54,6 +57,11 @@ internal static class BottleShipsManager
     private static readonly Dictionary<string, Recipe> OwnedRecipes = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> WarnedMessages = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<BottleTarget, ApplyScope> PendingScopedApplies = new();
+    // The prefab can survive a ZNetScene replacement after being resized. Keep its original
+    // transform values for the process lifetime so the resized state is never captured again.
+    private static BatteringRamSizeBaseline? BatteringRamBaseline;
+    private static int? BallistaOriginalAmmoCapacity;
+    private static bool BallistaAmmoCapacityWasApplied;
     private static bool ConfigBound;
     private static ZNetScene? BaselineScene;
     private static bool FullApplyPending;
@@ -209,7 +217,7 @@ internal static class BottleShipsManager
             }
 
             PrepareBaselineScene();
-            Piece[] livePieces = (scope & ApplyScope.PieceConfig) != 0
+            Piece[] livePieces = (scope & ApplyScope.LivePiece) != 0
                 ? Piece.s_allPieces.ToArray()
                 : Array.Empty<Piece>();
             foreach (BottleTarget target in targets)
@@ -436,10 +444,16 @@ internal static class BottleShipsManager
 
         if ((pieceScope & ApplyScope.BatteringRamSize) != 0)
         {
-            ApplyBatteringRamPrefabSize(target, piece, baseline);
+            ApplyBatteringRamPrefabSize(target, piece);
         }
 
-        if (configScope == ApplyScope.None)
+        bool applyBallistaAmmoCapacity = (pieceScope & ApplyScope.BallistaAmmoCapacity) != 0;
+        if (applyBallistaAmmoCapacity)
+        {
+            ApplyBallistaAmmoCapacity(target, piece);
+        }
+
+        if (configScope == ApplyScope.None && !applyBallistaAmmoCapacity)
         {
             return;
         }
@@ -448,7 +462,15 @@ internal static class BottleShipsManager
         {
             if (instance != null && PrefabNameEquals(instance.gameObject, target.PiecePrefab))
             {
-                ApplyPieceConfig(target, instance, baseline, configScope);
+                if (configScope != ApplyScope.None)
+                {
+                    ApplyPieceConfig(target, instance, baseline, configScope);
+                }
+
+                if (applyBallistaAmmoCapacity)
+                {
+                    ApplyBallistaAmmoCapacity(target, instance);
+                }
             }
         }
     }
@@ -497,18 +519,129 @@ internal static class BottleShipsManager
 
     private static void ApplyBatteringRamPrefabSize(
         BottleTarget target,
-        Piece prefabPiece,
-        PieceBaseline baseline)
+        Piece prefabPiece)
     {
         if (!string.Equals(target.PiecePrefab, BatteringRamPrefab, StringComparison.OrdinalIgnoreCase) ||
-            target.Config?.BatteringRamSize == null ||
-            baseline.BatteringRam == null)
+            target.Config?.BatteringRamSize == null)
         {
             return;
         }
 
+        BatteringRamBaseline ??= BatteringRamSizeBaseline.From(prefabPiece.gameObject);
         float size = Mathf.Clamp(target.Config.BatteringRamSize.Value, 0.5f, 1f);
-        baseline.BatteringRam.Apply(prefabPiece.gameObject, size);
+        BatteringRamBaseline.Apply(prefabPiece.gameObject, size);
+    }
+
+    private static void ApplyBallistaAmmoCapacity(BottleTarget target, Piece piece)
+    {
+        if (!string.Equals(target.PiecePrefab, BallistaPrefab, StringComparison.OrdinalIgnoreCase) ||
+            target.Config?.BallistaAmmoCapacity == null)
+        {
+            return;
+        }
+
+        Turret turret = piece.GetComponent<Turret>();
+        if (turret == null)
+        {
+            WarnOnce($"Could not apply Ballista Ammo Capacity: '{BallistaPrefab}' has no Turret component.");
+            return;
+        }
+
+        if (BallistaOriginalAmmoCapacity == null)
+        {
+            if (turret.m_maxAmmo <= 0)
+            {
+                WarnOnce("Could not apply Ballista Ammo Capacity: the captured original capacity is not positive.");
+                return;
+            }
+
+            BallistaOriginalAmmoCapacity = turret.m_maxAmmo;
+        }
+
+        int originalCapacity = BallistaOriginalAmmoCapacity.Value;
+        int configuredCapacity = Mathf.Clamp(target.Config.BallistaAmmoCapacity.Value, 0, 1000);
+        if (configuredCapacity > originalCapacity)
+        {
+            turret.m_maxAmmo = configuredCapacity;
+            BallistaAmmoCapacityWasApplied = true;
+        }
+        else if (BallistaAmmoCapacityWasApplied)
+        {
+            turret.m_maxAmmo = originalCapacity;
+        }
+    }
+
+    internal static bool CanReceiveConfiguredBallistaAmmo(Turret turret)
+    {
+        if (!IsConfiguredBallista(turret) ||
+            !IsBallistaAmmoCapacityExpanded() ||
+            turret.m_nview == null ||
+            !turret.m_nview.IsValid() ||
+            !turret.m_nview.IsOwner())
+        {
+            return true;
+        }
+
+        return turret.GetAmmo() < turret.m_maxAmmo;
+    }
+
+    internal static bool TryDropStackedBallistaAmmo(Turret turret)
+    {
+        if (!IsConfiguredBallista(turret) ||
+            BallistaOriginalAmmoCapacity == null ||
+            turret.m_nview == null ||
+            !turret.m_nview.IsValid() ||
+            !turret.m_nview.IsOwner() ||
+            !turret.m_returnAmmoOnDestroy)
+        {
+            return false;
+        }
+
+        int ammo = turret.GetAmmo();
+        if (ammo <= BallistaOriginalAmmoCapacity.Value)
+        {
+            return false;
+        }
+
+        GameObject? ammoPrefab = ZNetScene.instance?.GetPrefab(turret.GetAmmoType());
+        ItemDrop? itemDrop = ammoPrefab != null ? ammoPrefab.GetComponent<ItemDrop>() : null;
+        if (itemDrop == null)
+        {
+            return false;
+        }
+
+        int maxStackSize = Mathf.Max(1, itemDrop.m_itemData.m_shared.m_maxStackSize);
+        if (maxStackSize <= 1)
+        {
+            return false;
+        }
+
+        int remaining = ammo;
+        while (remaining > 0)
+        {
+            Vector3 position = turret.transform.position + Vector3.up + UnityEngine.Random.insideUnitSphere * 0.3f;
+            Quaternion rotation = Quaternion.Euler(0f, UnityEngine.Random.Range(0, 360), 0f);
+            ItemDrop dropped = UnityEngine.Object.Instantiate(ammoPrefab!, position, rotation).GetComponent<ItemDrop>()!;
+            int stack = Mathf.Min(remaining, maxStackSize);
+            dropped.SetStack(stack);
+            ItemDrop.OnCreateNew(dropped);
+            remaining -= stack;
+        }
+
+        return true;
+    }
+
+    private static bool IsBallistaAmmoCapacityExpanded()
+    {
+        int configuredCapacity = Targets
+            .FirstOrDefault(target => string.Equals(target.PiecePrefab, BallistaPrefab, StringComparison.OrdinalIgnoreCase))
+            ?.Config?.BallistaAmmoCapacity?.Value ?? 0;
+        return BallistaOriginalAmmoCapacity != null && configuredCapacity > BallistaOriginalAmmoCapacity.Value;
+    }
+
+    private static bool IsConfiguredBallista(Turret turret)
+    {
+        return turret != null && PrefabNameEquals(turret.gameObject, BallistaPrefab);
     }
 
     private static void PrepareBaselineScene()
@@ -861,6 +994,7 @@ internal static class BottleShipsManager
         internal ConfigEntry<string> BottleRecipeStation = null!;
         internal ConfigEntry<string> BottleRecipeResources = null!;
         internal ConfigEntry<float>? BatteringRamSize;
+        internal ConfigEntry<int>? BallistaAmmoCapacity;
 
         internal static BottleConfig Bind(BottleShipsPlugin plugin, BottleTarget target, int sectionNumber)
         {
@@ -941,6 +1075,18 @@ internal static class BottleShipsManager
                     order: 960);
             }
 
+            if (string.Equals(target.PiecePrefab, BallistaPrefab, StringComparison.OrdinalIgnoreCase))
+            {
+                config.BallistaAmmoCapacity = plugin.config(
+                    "01 - General",
+                    "Ballista Ammo Capacity",
+                    0,
+                    new ConfigDescription(
+                        "Maximum ammunition stored by vanilla ballistas. 0 or a value at or below the captured original capacity preserves the original capacity. Existing excess ammo is not deleted when this value is lowered.",
+                        new AcceptableValueRange<int>(0, 1000)),
+                    order: 950);
+            }
+
             return config;
         }
 
@@ -966,6 +1112,11 @@ internal static class BottleShipsManager
             {
                 BatteringRamSize.SettingChanged += (_, _) => handler(ApplyScope.BatteringRamSize);
             }
+
+            if (BallistaAmmoCapacity != null)
+            {
+                BallistaAmmoCapacity.SettingChanged += (_, _) => handler(ApplyScope.BallistaAmmoCapacity);
+            }
         }
     }
 
@@ -973,17 +1124,13 @@ internal static class BottleShipsManager
     {
         internal Piece.Requirement[] Resources = Array.Empty<Piece.Requirement>();
         internal CraftingStation? CraftingStation;
-        internal BatteringRamSizeBaseline? BatteringRam;
 
         internal static PieceBaseline From(Piece piece)
         {
             return new PieceBaseline
             {
                 Resources = CloneRequirements(piece.m_resources ?? Array.Empty<Piece.Requirement>()),
-                CraftingStation = piece.m_craftingStation,
-                BatteringRam = PrefabNameEquals(piece.gameObject, BatteringRamPrefab)
-                    ? BatteringRamSizeBaseline.From(piece.gameObject)
-                    : null
+                CraftingStation = piece.m_craftingStation
             };
         }
     }

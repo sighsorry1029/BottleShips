@@ -75,9 +75,10 @@ BottleShips is configured through the normal BepInEx config file. No YAML editin
 
 General options:
 
-* `Extended Cart Interaction`: client-only toggle that expands the cart's normal Use interaction to nearby carts without adding a separate hotkey or tooltip. Default: `On`.
+* `Extended Cart Interaction`: client-only toggle that expands the normal attach/detach interaction of `Vagon`-based vehicles such as carts, battering rams, and catapults without adding a separate hotkey or tooltip. Default: `On`.
 * `Troll Trap Auto Reload Seconds`: automatically rearms `piece_trap_troll` after it triggers. Default: `5`. Range: `0-10`, where `0` disables it.
 * `Ballista Targeting Tweaks`: trophy targets are prioritized, but the ballista can still attack other valid enemies. Players, tamed creatures, and creatures in the `PlayerSpawned` faction are never selected as targets.
+* `Ballista Ammo Capacity`: raises the actual ammunition capacity of all vanilla ballistas, so the hover display and compatible fill-all mods use the same limit. Default: `0` (original capacity). Range: `0-1000`; values at or below the captured original capacity preserve the original value, and lowering it does not delete stored excess ammo.
 * `Battering Ram Size`: scales newly placed battering rams. Default: `0.75`. Range: `0.5-1`. Existing placed battering rams are not changed.
 
 Ship tweaks apply to every object with a `Ship` component, including ships added by other mods.
