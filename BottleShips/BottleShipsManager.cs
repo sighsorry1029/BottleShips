@@ -1072,7 +1072,7 @@ internal static class BottleShipsManager
                     new ConfigDescription(
                         "Overall size multiplier for newly placed battering rams. Existing placed battering rams are not changed.",
                         new AcceptableValueRange<float>(0.5f, 1f)),
-                    order: 960);
+                    order: 970);
             }
 
             if (string.Equals(target.PiecePrefab, BallistaPrefab, StringComparison.OrdinalIgnoreCase))

@@ -16,7 +16,7 @@ namespace BottleShips
     public class BottleShipsPlugin : BaseUnityPlugin
     {
         internal const string ModName = "BottleShips";
-        internal const string ModVersion = "1.1.8";
+        internal const string ModVersion = "1.1.9";
         internal const string Author = "sighsorry";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
@@ -74,7 +74,7 @@ namespace BottleShips
                 "Ballista Targeting Tweaks",
                 Toggle.On,
                 "If on, ballista trophies prioritize related targets instead of excluding other targets, and players, tamed creatures, and PlayerSpawned-faction creatures are never selected as targets.",
-                order: 970);
+                order: 960);
 
             foreach (string bottleItem in BottleShipsManager.BottleItemNames)
             {
@@ -229,12 +229,16 @@ namespace BottleShips
                    || Utils.GetPrefabName(trap.gameObject) == "piece_trap_troll";
         }
 
-        internal static bool TryApplyExtendedCartDistance(Vagon vagon, out QuickCartDistanceState state)
+        internal static bool TryApplyExtendedCartDistance(
+            Vagon vagon,
+            GameObject attachTarget,
+            out QuickCartDistanceState state)
         {
             state = default;
             Player player = Player.m_localPlayer;
             if (!ExtendedCartInteractionEnabled
                 || player == null
+                || attachTarget != player.gameObject
                 || vagon == null
                 || vagon.m_nview == null
                 || !vagon.m_nview.IsValid()
@@ -252,13 +256,13 @@ namespace BottleShips
                 if (_quickCartAttachWindowTarget == vagon && Time.time > _quickCartAttachWindowUntil)
                 {
                     _quickCartAttachWindowTarget = null;
+                    _quickCartAttachWindowUntil = float.NegativeInfinity;
                 }
 
                 return false;
             }
 
-            if (requestPending &&
-                (!IsQuickCartCandidate(vagon, player, out float distance) || distance > QuickCartDistance))
+            if (!IsQuickCartCandidate(vagon, player, out float distance) || distance >= QuickCartDistance)
             {
                 return false;
             }
@@ -376,7 +380,7 @@ namespace BottleShips
                     return true;
                 }
 
-                if (distance <= QuickCartDistance && distance < closestDistance)
+                if (distance < QuickCartDistance && distance < closestDistance)
                 {
                     closestDistance = distance;
                     closestVagon = vagon;
@@ -485,15 +489,16 @@ namespace BottleShips
         }
     }
 
-    [HarmonyPatch(typeof(Vagon), "FixedUpdate")]
-    internal static class BottleShipsVagonFixedUpdatePatch
+    [HarmonyPatch(typeof(Vagon), nameof(Vagon.CanAttach))]
+    internal static class BottleShipsVagonCanAttachPatch
     {
-        [HarmonyPriority(Priority.Last)]
+        [HarmonyPriority(Priority.First)]
         private static void Prefix(
             Vagon __instance,
+            GameObject __0,
             out BottleShipsPlugin.QuickCartDistanceState __state)
         {
-            BottleShipsPlugin.TryApplyExtendedCartDistance(__instance, out __state);
+            BottleShipsPlugin.TryApplyExtendedCartDistance(__instance, __0, out __state);
         }
 
         [HarmonyPriority(Priority.First)]

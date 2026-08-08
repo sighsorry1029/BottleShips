@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.9
+
+- Fixed `Extended Cart Interaction` compatibility with mods such as OdinHorse that replace `Vagon.FixedUpdate`. The wider attach distance now applies only during the requested local player's `Vagon.CanAttach` checks and is restored immediately afterward, preserving other attachment targets and mod behavior.
+- Reordered the General settings so `Battering Ram Size` appears before `Ballista Targeting Tweaks`.
+
 ## 1.1.8
 
 - Added `Ballista Ammo Capacity`, a server-synced `0-1000` setting that raises the vanilla ballista's actual ammunition limit for its hover display and compatible fill-all mods. Existing excess ammunition is preserved when the setting is lowered, owner-side RPCs reject overfill, and large stores are returned in item stacks when the ballista is destroyed.
