@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Reflection;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
@@ -29,11 +30,11 @@ internal static class BottleShipsManager
         PieceStation = 1 << 7,
         PieceCanBeRemoved = 1 << 8,
         BatteringRamSize = 1 << 9,
-        BallistaAmmoCapacity = 1 << 10,
+        BallistaAmmoCapacityMultiplier = 1 << 10,
         BottleItem = BottleWeight | BottleStack | BottleTeleportable,
         BottleRecipe = BottleRecipeEnabled | BottleRecipeStation | BottleRecipeResources,
         PieceConfig = PieceResources | PieceStation | PieceCanBeRemoved,
-        LivePiece = PieceConfig | BallistaAmmoCapacity,
+        LivePiece = PieceConfig | BallistaAmmoCapacityMultiplier,
         Piece = LivePiece | BatteringRamSize,
         All = BottleItem | BottleRecipe | Piece,
     }
@@ -61,7 +62,7 @@ internal static class BottleShipsManager
     // transform values for the process lifetime so the resized state is never captured again.
     private static BatteringRamSizeBaseline? BatteringRamBaseline;
     private static int? BallistaOriginalAmmoCapacity;
-    private static bool BallistaAmmoCapacityWasApplied;
+    private static bool BallistaAmmoCapacityMultiplierWasApplied;
     private static bool ConfigBound;
     private static ZNetScene? BaselineScene;
     private static bool FullApplyPending;
@@ -227,6 +228,11 @@ internal static class BottleShipsManager
                 ApplyPiece(target, livePieces, scope);
             }
 
+            if ((scope & ApplyScope.BottleRecipe) != 0)
+            {
+                RefreshRecycleNReclaimRecipeCache();
+            }
+
             ApplyFailureLogged = false;
             return true;
         }
@@ -241,6 +247,38 @@ internal static class BottleShipsManager
             }
 
             return false;
+        }
+    }
+
+    private static void RefreshRecycleNReclaimRecipeCache()
+    {
+        Type? reclaimerType = Type.GetType(
+            "Recycle_N_Reclaim.GamePatches.Recycling.Reclaimer, Recycle_N_Reclaim",
+            throwOnError: false);
+        if (reclaimerType == null)
+        {
+            return;
+        }
+
+        MethodInfo? buildRecipeCache = reclaimerType.GetMethod(
+            "BuildRecipeCache",
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            types: new[] { typeof(ObjectDB) },
+            modifiers: null);
+        if (buildRecipeCache == null)
+        {
+            WarnOnce("Recycle_N_Reclaim was found, but its recipe cache refresh method was not available.");
+            return;
+        }
+
+        try
+        {
+            buildRecipeCache.Invoke(null, new object[] { ObjectDB.instance });
+        }
+        catch (Exception exception)
+        {
+            WarnOnce($"Could not refresh the Recycle_N_Reclaim recipe cache: {exception.Message}");
         }
     }
 
@@ -447,13 +485,14 @@ internal static class BottleShipsManager
             ApplyBatteringRamPrefabSize(target, piece);
         }
 
-        bool applyBallistaAmmoCapacity = (pieceScope & ApplyScope.BallistaAmmoCapacity) != 0;
-        if (applyBallistaAmmoCapacity)
+        bool applyBallistaAmmoCapacityMultiplier =
+            (pieceScope & ApplyScope.BallistaAmmoCapacityMultiplier) != 0;
+        if (applyBallistaAmmoCapacityMultiplier)
         {
-            ApplyBallistaAmmoCapacity(target, piece);
+            ApplyBallistaAmmoCapacityMultiplier(target, piece);
         }
 
-        if (configScope == ApplyScope.None && !applyBallistaAmmoCapacity)
+        if (configScope == ApplyScope.None && !applyBallistaAmmoCapacityMultiplier)
         {
             return;
         }
@@ -467,9 +506,9 @@ internal static class BottleShipsManager
                     ApplyPieceConfig(target, instance, baseline, configScope);
                 }
 
-                if (applyBallistaAmmoCapacity)
+                if (applyBallistaAmmoCapacityMultiplier)
                 {
-                    ApplyBallistaAmmoCapacity(target, instance);
+                    ApplyBallistaAmmoCapacityMultiplier(target, instance);
                 }
             }
         }
@@ -532,10 +571,10 @@ internal static class BottleShipsManager
         BatteringRamBaseline.Apply(prefabPiece.gameObject, size);
     }
 
-    private static void ApplyBallistaAmmoCapacity(BottleTarget target, Piece piece)
+    private static void ApplyBallistaAmmoCapacityMultiplier(BottleTarget target, Piece piece)
     {
         if (!string.Equals(target.PiecePrefab, BallistaPrefab, StringComparison.OrdinalIgnoreCase) ||
-            target.Config?.BallistaAmmoCapacity == null)
+            target.Config?.BallistaAmmoCapacityMultiplier == null)
         {
             return;
         }
@@ -543,7 +582,7 @@ internal static class BottleShipsManager
         Turret turret = piece.GetComponent<Turret>();
         if (turret == null)
         {
-            WarnOnce($"Could not apply Ballista Ammo Capacity: '{BallistaPrefab}' has no Turret component.");
+            WarnOnce($"Could not apply Ballista Ammo Capacity Multiplier: '{BallistaPrefab}' has no Turret component.");
             return;
         }
 
@@ -551,7 +590,7 @@ internal static class BottleShipsManager
         {
             if (turret.m_maxAmmo <= 0)
             {
-                WarnOnce("Could not apply Ballista Ammo Capacity: the captured original capacity is not positive.");
+                WarnOnce("Could not apply Ballista Ammo Capacity Multiplier: the captured original capacity is not positive.");
                 return;
             }
 
@@ -559,13 +598,13 @@ internal static class BottleShipsManager
         }
 
         int originalCapacity = BallistaOriginalAmmoCapacity.Value;
-        int configuredCapacity = Mathf.Clamp(target.Config.BallistaAmmoCapacity.Value, 0, 1000);
-        if (configuredCapacity > originalCapacity)
+        int capacityMultiplier = Mathf.Clamp(target.Config.BallistaAmmoCapacityMultiplier.Value, 1, 20);
+        if (capacityMultiplier > 1)
         {
-            turret.m_maxAmmo = configuredCapacity;
-            BallistaAmmoCapacityWasApplied = true;
+            turret.m_maxAmmo = originalCapacity * capacityMultiplier;
+            BallistaAmmoCapacityMultiplierWasApplied = true;
         }
-        else if (BallistaAmmoCapacityWasApplied)
+        else if (BallistaAmmoCapacityMultiplierWasApplied)
         {
             turret.m_maxAmmo = originalCapacity;
         }
@@ -633,10 +672,10 @@ internal static class BottleShipsManager
 
     private static bool IsBallistaAmmoCapacityExpanded()
     {
-        int configuredCapacity = Targets
+        int capacityMultiplier = Targets
             .FirstOrDefault(target => string.Equals(target.PiecePrefab, BallistaPrefab, StringComparison.OrdinalIgnoreCase))
-            ?.Config?.BallistaAmmoCapacity?.Value ?? 0;
-        return BallistaOriginalAmmoCapacity != null && configuredCapacity > BallistaOriginalAmmoCapacity.Value;
+            ?.Config?.BallistaAmmoCapacityMultiplier?.Value ?? 1;
+        return BallistaOriginalAmmoCapacity != null && capacityMultiplier > 1;
     }
 
     private static bool IsConfiguredBallista(Turret turret)
@@ -994,7 +1033,7 @@ internal static class BottleShipsManager
         internal ConfigEntry<string> BottleRecipeStation = null!;
         internal ConfigEntry<string> BottleRecipeResources = null!;
         internal ConfigEntry<float>? BatteringRamSize;
-        internal ConfigEntry<int>? BallistaAmmoCapacity;
+        internal ConfigEntry<int>? BallistaAmmoCapacityMultiplier;
 
         internal static BottleConfig Bind(BottleShipsPlugin plugin, BottleTarget target, int sectionNumber)
         {
@@ -1077,13 +1116,13 @@ internal static class BottleShipsManager
 
             if (string.Equals(target.PiecePrefab, BallistaPrefab, StringComparison.OrdinalIgnoreCase))
             {
-                config.BallistaAmmoCapacity = plugin.config(
+                config.BallistaAmmoCapacityMultiplier = plugin.config(
                     "01 - General",
-                    "Ballista Ammo Capacity",
-                    0,
+                    "Ballista Ammo Capacity Multiplier",
+                    1,
                     new ConfigDescription(
-                        "Maximum ammunition stored by vanilla ballistas. 0 or a value at or below the captured original capacity preserves the original capacity. Existing excess ammo is not deleted when this value is lowered.",
-                        new AcceptableValueRange<int>(0, 1000)),
+                        "Multiplier applied to the captured original ammunition capacity of vanilla ballistas. 1 preserves the original capacity. Existing excess ammo is not deleted when this value is lowered.",
+                        new AcceptableValueRange<int>(1, 20)),
                     order: 950);
             }
 
@@ -1113,9 +1152,10 @@ internal static class BottleShipsManager
                 BatteringRamSize.SettingChanged += (_, _) => handler(ApplyScope.BatteringRamSize);
             }
 
-            if (BallistaAmmoCapacity != null)
+            if (BallistaAmmoCapacityMultiplier != null)
             {
-                BallistaAmmoCapacity.SettingChanged += (_, _) => handler(ApplyScope.BallistaAmmoCapacity);
+                BallistaAmmoCapacityMultiplier.SettingChanged += (_, _) =>
+                    handler(ApplyScope.BallistaAmmoCapacityMultiplier);
             }
         }
     }

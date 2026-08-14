@@ -79,7 +79,7 @@ General options:
 * `Troll Trap Auto Reload Seconds`: automatically rearms `piece_trap_troll` after it triggers. Default: `5`. Range: `0-10`, where `0` disables it.
 * `Battering Ram Size`: scales newly placed battering rams. Default: `0.75`. Range: `0.5-1`. Existing placed battering rams are not changed.
 * `Ballista Targeting Tweaks`: trophy targets are prioritized, but the ballista can still attack other valid enemies. Players, tamed creatures, and creatures in the `PlayerSpawned` faction are never selected as targets.
-* `Ballista Ammo Capacity`: raises the actual ammunition capacity of all vanilla ballistas, so the hover display and compatible fill-all mods use the same limit. Default: `0` (original capacity). Range: `0-1000`; values at or below the captured original capacity preserve the original value, and lowering it does not delete stored excess ammo.
+* `Ballista Ammo Capacity Multiplier`: multiplies the captured original ammunition capacity of all vanilla ballistas, so the hover display and compatible fill-all mods use the same limit. Default: `1` (original capacity). Range: `1-20`; lowering it does not delete stored excess ammo.
 
 Ship tweaks apply to every object with a `Ship` component, including ships added by other mods.
 

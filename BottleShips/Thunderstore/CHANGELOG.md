@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.10
+
+- Fixed Recycle_N_Reclaim compatibility for BottleShips' dynamically registered recipes. Bottle items now appear in Reclaim tabs after recipe changes without adding a hard dependency.
+- Replaced `Ballista Ammo Capacity` with the server-synced `Ballista Ammo Capacity Multiplier`. It defaults to `1`, accepts `1-20`, and multiplies the captured original capacity while preserving stored excess ammunition when lowered. The removed absolute-capacity setting is not migrated.
+
 ## 1.1.9
 
 - Fixed `Extended Cart Interaction` compatibility with mods such as OdinHorse that replace `Vagon.FixedUpdate`. The wider attach distance now applies only during the requested local player's `Vagon.CanAttach` checks and is restored immediately afterward, preserving other attachment targets and mod behavior.
