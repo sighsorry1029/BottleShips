@@ -36,6 +36,11 @@ internal static class ShipTweaksManager
 
     internal static void BindConfig(BottleShipsPlugin plugin)
     {
+        if (_powerPaddlingBonusPerPlayer != null)
+        {
+            _powerPaddlingBonusPerPlayer.SettingChanged -= HandlePowerPaddlingConfigChanged;
+        }
+
         _exploreRadiusMultiplier = plugin.config(
             ConfigGroup,
             "Explore Radius Multiplier",
@@ -60,7 +65,7 @@ internal static class ShipTweaksManager
                 "Additional paddling-force ratio contributed by each helmsman or seated passenger who holds the Run input and spends a base 10 stamina per second. 0.5 adds 50% of the ship's globally scaled paddling force per active player at Back or Slow; merely sitting aboard adds nothing. Power Paddling is unavailable at Half or Full while the sails are deployed. 0 disables Power Paddling. Each active player's own camera field of view smoothly increases by up to 10 degrees; other paddlers do not stack additional FOV on that player.",
                 new AcceptableValueRange<float>(0f, 1f)),
             order: 980);
-        _powerPaddlingBonusPerPlayer.SettingChanged += (_, _) => HandlePowerPaddlingConfigChanged();
+        _powerPaddlingBonusPerPlayer.SettingChanged += HandlePowerPaddlingConfigChanged;
     }
 
     internal static bool TryApplyExploreRadius(Minimap minimap, Player player, out ExploreRadiusState state)
@@ -283,6 +288,11 @@ internal static class ShipTweaksManager
 
     internal static void Shutdown()
     {
+        if (_powerPaddlingBonusPerPlayer != null)
+        {
+            _powerPaddlingBonusPerPlayer.SettingChanged -= HandlePowerPaddlingConfigChanged;
+        }
+
         SetLocalPowerPaddlingRequest(null, requested: false);
         PowerPaddlingRequests.Clear();
         PowerPaddlingPhysicsContexts.Clear();
@@ -294,7 +304,7 @@ internal static class ShipTweaksManager
         _powerPaddlingBonusPerPlayer != null
         && GetFiniteValue(_powerPaddlingBonusPerPlayer, 0.5f) > 0f;
 
-    private static void HandlePowerPaddlingConfigChanged()
+    private static void HandlePowerPaddlingConfigChanged(object? sender, EventArgs args)
     {
         if (PowerPaddlingEnabled)
         {

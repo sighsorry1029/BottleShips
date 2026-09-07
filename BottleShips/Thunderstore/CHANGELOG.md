@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.11
+
+- Reduced repeated build-station lookups and resource parsing when applying piece settings to existing world objects, while preserving per-piece resource data and field-scoped updates.
+- Reduced redundant visibility toggles and transform updates in the field ship-repair Wood indicator.
+- Prevented duplicate Power Paddling and field-repair setting callbacks when configurations are rebound, and detached those callbacks on plugin shutdown.
+- Simplified recipe application and grouped ballista ammunition patches with their existing handling code.
+
 ## 1.1.10
 
 - Fixed Recycle_N_Reclaim compatibility for BottleShips' dynamically registered recipes. Bottle items now appear in Reclaim tabs after recipe changes without adding a hard dependency.

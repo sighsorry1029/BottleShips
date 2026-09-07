@@ -16,7 +16,7 @@ namespace BottleShips
     public class BottleShipsPlugin : BaseUnityPlugin
     {
         internal const string ModName = "BottleShips";
-        internal const string ModVersion = "1.1.10";
+        internal const string ModVersion = "1.1.11";
         internal const string Author = "sighsorry";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
@@ -768,24 +768,6 @@ namespace BottleShips
         private static void Prefix(ref ZDOID character)
         {
             BottleShipsPlugin.RejectProtectedBallistaTarget(ref character);
-        }
-    }
-
-    [HarmonyPatch(typeof(Turret), nameof(Turret.RPC_AddAmmo))]
-    internal static class BottleShipsTurretRpcAddAmmoCapacityPatch
-    {
-        private static bool Prefix(Turret __instance)
-        {
-            return BottleShipsManager.CanReceiveConfiguredBallistaAmmo(__instance);
-        }
-    }
-
-    [HarmonyPatch(typeof(Turret), nameof(Turret.OnDestroyed))]
-    internal static class BottleShipsTurretOnDestroyedAmmoPatch
-    {
-        private static bool Prefix(Turret __instance)
-        {
-            return !BottleShipsManager.TryDropStackedBallistaAmmo(__instance);
         }
     }
 }

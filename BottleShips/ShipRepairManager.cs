@@ -38,6 +38,11 @@ internal static class ShipRepairManager
 
     internal static void BindConfig(BottleShipsPlugin plugin)
     {
+        if (_healthPerWood != null)
+        {
+            _healthPerWood.SettingChanged -= HandleConfigChanged;
+        }
+
         _healthPerWood = plugin.config(
             ConfigGroup,
             "Ship Repair Durability Per Wood",
@@ -46,7 +51,7 @@ internal static class ShipRepairManager
                 "0 disables field ship repair and preserves vanilla repair behavior. Otherwise, this is the missing ship health repaired per Wood when the repairing player is outside the ship's required build-station range. Range is checked from the player's position. Ships with Build Station set to None use a Workbench as their repair-station fallback. Repairs within range are free, and the ship is still repaired to full health in one action.",
                 new AcceptableValueRange<int>(0, 1000)),
             order: 970);
-        _healthPerWood.SettingChanged += (_, _) => HandleConfigChanged();
+        _healthPerWood.SettingChanged += HandleConfigChanged;
     }
 
     internal static bool BeginRepair(Player player, out RepairAttempt? state)
@@ -107,7 +112,7 @@ internal static class ShipRepairManager
     {
         RepairAttempt? attempt = _activeRepair;
         if (attempt == null
-            || attempt.RepairAccepted
+            || attempt.RepairRequestAccepted
             || !ReferenceEquals(attempt.WearNTear, wearNTear)
             || !repaired
             || wearNTear.m_lastRepair == attempt.LastRepairBefore)
@@ -115,7 +120,7 @@ internal static class ShipRepairManager
             return;
         }
 
-        attempt.RepairAccepted = true;
+        attempt.RepairRequestAccepted = true;
     }
 
     internal static void RecordHealthChanged(WearNTear wearNTear, float health)
@@ -149,7 +154,7 @@ internal static class ShipRepairManager
             _activeRepair = attempt.Previous;
         }
 
-        if (!attempt.RepairAccepted
+        if (!attempt.RepairRequestAccepted
             || attempt.WoodCost <= 0)
         {
             return;
@@ -186,7 +191,6 @@ internal static class ShipRepairManager
     internal static void UpdateRequirementWidget(Hud hud, Player player)
     {
         InitializeHud(hud);
-        HideRequirementWidget();
         if (hud == null
             || player == null
             || !FieldRepairEnabled
@@ -199,6 +203,7 @@ internal static class ShipRepairManager
             || quote.Wood == null
             || !EnsureRequirementWidget(hud))
         {
+            HideRequirementWidget();
             return;
         }
 
@@ -226,6 +231,7 @@ internal static class ShipRepairManager
 
         if (!shown)
         {
+            HideRequirementWidget();
             return;
         }
 
@@ -236,7 +242,10 @@ internal static class ShipRepairManager
         }
 
         SynchronizeRequirementWidgetTransform(hud);
-        _requirementWidget.SetActive(true);
+        if (!_requirementWidget.activeSelf)
+        {
+            _requirementWidget.SetActive(true);
+        }
     }
 
     internal static void ClearHud(Hud hud)
@@ -253,6 +262,11 @@ internal static class ShipRepairManager
 
     internal static void Shutdown()
     {
+        if (_healthPerWood != null)
+        {
+            _healthPerWood.SettingChanged -= HandleConfigChanged;
+        }
+
         _activeRepair = null;
         if (_requirementWidget != null)
         {
@@ -273,7 +287,7 @@ internal static class ShipRepairManager
     private static bool FieldRepairEnabled =>
         _healthPerWood != null && _healthPerWood.Value > 0;
 
-    private static void HandleConfigChanged()
+    private static void HandleConfigChanged(object? sender, EventArgs args)
     {
         HideRequirementWidget();
         if (!FieldRepairEnabled)
@@ -448,7 +462,6 @@ internal static class ShipRepairManager
 
         if (_requirementWidget != null)
         {
-            SynchronizeRequirementWidgetTransform(hud);
             return true;
         }
 
@@ -627,7 +640,7 @@ internal static class ShipRepairManager
 
     private static void HideRequirementWidget()
     {
-        if (_requirementWidget != null)
+        if (_requirementWidget != null && _requirementWidget.activeSelf)
         {
             _requirementWidget.SetActive(false);
         }
@@ -643,7 +656,8 @@ internal static class ShipRepairManager
         internal readonly int WoodCost;
         internal readonly float LastRepairBefore;
         internal readonly RepairAttempt? Previous;
-        internal bool RepairAccepted;
+        // Local acceptance of the repair request; owner completion is not confirmed here.
+        internal bool RepairRequestAccepted;
 
         internal RepairAttempt(
             Player player,

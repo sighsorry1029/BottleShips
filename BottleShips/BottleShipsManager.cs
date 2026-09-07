@@ -359,18 +359,10 @@ internal static class BottleShipsManager
             return;
         }
 
-        bool fullRecipeApply = recipeScope == ApplyScope.BottleRecipe;
-        bool initializeAll = !hasOwnedRecipe;
-        bool applyCore = initializeAll || fullRecipeApply;
-        bool applyEnabled = initializeAll ||
-                            fullRecipeApply ||
-                            (recipeScope & ApplyScope.BottleRecipeEnabled) != 0;
-        bool applyStation = initializeAll ||
-                            fullRecipeApply ||
-                            (recipeScope & ApplyScope.BottleRecipeStation) != 0;
-        bool applyResources = initializeAll ||
-                              fullRecipeApply ||
-                              (recipeScope & ApplyScope.BottleRecipeResources) != 0;
+        bool applyCore = !hasOwnedRecipe || recipeScope == ApplyScope.BottleRecipe;
+        bool applyEnabled = applyCore || (recipeScope & ApplyScope.BottleRecipeEnabled) != 0;
+        bool applyStation = applyCore || (recipeScope & ApplyScope.BottleRecipeStation) != 0;
+        bool applyResources = applyCore || (recipeScope & ApplyScope.BottleRecipeResources) != 0;
 
         ItemDrop? item = null;
         if (applyCore)
@@ -461,7 +453,8 @@ internal static class BottleShipsManager
         ApplyScope scope)
     {
         ApplyScope pieceScope = scope & ApplyScope.Piece;
-        if (pieceScope == ApplyScope.None || target.Config == null)
+        BottleConfig? config = target.Config;
+        if (pieceScope == ApplyScope.None || config == null)
         {
             return;
         }
@@ -475,9 +468,54 @@ internal static class BottleShipsManager
 
         PieceBaseline baseline = GetOrCapturePieceBaseline(target, piece);
         ApplyScope configScope = pieceScope & ApplyScope.PieceConfig;
-        if (configScope != ApplyScope.None)
+        bool applyCanBeRemoved = (configScope & ApplyScope.PieceCanBeRemoved) != 0;
+        bool canBeRemoved = applyCanBeRemoved && config.CanBeRemoved.Value == BottleShipsPlugin.Toggle.On;
+        if (applyCanBeRemoved)
         {
-            ApplyPieceConfig(target, piece, baseline, configScope);
+            piece.m_canBeRemoved = canBeRemoved;
+        }
+
+        CraftingStation? station = null;
+        bool applyStation = (configScope & ApplyScope.PieceStation) != 0;
+        if (applyStation)
+        {
+            string stationName = NormalizePrefabName(config.BuildStation.Value);
+            if (string.Equals(stationName, OriginalStationValue, StringComparison.OrdinalIgnoreCase))
+            {
+                station = baseline.CraftingStation;
+            }
+            else if (!TryResolveCraftingStation(stationName, out station))
+            {
+                applyStation = false;
+                WarnOnce($"Could not apply piece '{target.PiecePrefab}': build station '{config.BuildStation.Value}' was not found.");
+            }
+
+            if (applyStation)
+            {
+                piece.m_craftingStation = station;
+            }
+        }
+
+        Piece.Requirement[]? requirements = null;
+        if ((configScope & ApplyScope.PieceResources) != 0)
+        {
+            if (config.UseOriginalBuildRecipe.Value == BottleShipsPlugin.Toggle.On)
+            {
+                requirements = baseline.Resources;
+            }
+            else if (TryParseRequirements(config.BuildResources.Value, out Piece.Requirement[] parsed))
+            {
+                requirements = parsed;
+            }
+            else
+            {
+                WarnOnce($"Could not apply piece '{target.PiecePrefab}': invalid build resources '{config.BuildResources.Value}'.");
+            }
+
+            if (requirements != null)
+            {
+                piece.m_resources = CloneRequirements(requirements);
+            }
         }
 
         if ((pieceScope & ApplyScope.BatteringRamSize) != 0)
@@ -501,9 +539,20 @@ internal static class BottleShipsManager
         {
             if (instance != null && PrefabNameEquals(instance.gameObject, target.PiecePrefab))
             {
-                if (configScope != ApplyScope.None)
+                if (applyCanBeRemoved)
                 {
-                    ApplyPieceConfig(target, instance, baseline, configScope);
+                    instance.m_canBeRemoved = canBeRemoved;
+                }
+
+                if (applyStation)
+                {
+                    instance.m_craftingStation = station;
+                }
+
+                if (requirements != null)
+                {
+                    // Each piece keeps its own mutable requirements, including the prefab.
+                    instance.m_resources = CloneRequirements(requirements);
                 }
 
                 if (applyBallistaAmmoCapacityMultiplier)
@@ -512,48 +561,6 @@ internal static class BottleShipsManager
                 }
             }
         }
-    }
-
-    private static void ApplyPieceConfig(
-        BottleTarget target,
-        Piece piece,
-        PieceBaseline baseline,
-        ApplyScope scope)
-    {
-        if (target.Config == null)
-        {
-            return;
-        }
-
-        if ((scope & ApplyScope.PieceCanBeRemoved) != 0)
-        {
-            piece.m_canBeRemoved = target.Config.CanBeRemoved.Value == BottleShipsPlugin.Toggle.On;
-        }
-
-        if ((scope & ApplyScope.PieceStation) != 0 &&
-            !ApplyBuildStation(piece, target.Config.BuildStation.Value, baseline))
-        {
-            WarnOnce($"Could not apply piece '{target.PiecePrefab}': build station '{target.Config.BuildStation.Value}' was not found.");
-        }
-
-        if ((scope & ApplyScope.PieceResources) == 0)
-        {
-            return;
-        }
-
-        if (target.Config.UseOriginalBuildRecipe.Value == BottleShipsPlugin.Toggle.On)
-        {
-            piece.m_resources = CloneRequirements(baseline.Resources);
-            return;
-        }
-
-        if (!TryParseRequirements(target.Config.BuildResources.Value, out Piece.Requirement[] requirements))
-        {
-            WarnOnce($"Could not apply piece '{target.PiecePrefab}': invalid build resources '{target.Config.BuildResources.Value}'.");
-            return;
-        }
-
-        piece.m_resources = requirements;
     }
 
     private static void ApplyBatteringRamPrefabSize(
@@ -706,30 +713,6 @@ internal static class BottleShipsManager
         baseline = PieceBaseline.From(prefabPiece);
         PieceBaselines[target.PiecePrefab] = baseline;
         return baseline;
-    }
-
-    private static bool ApplyBuildStation(Piece piece, string value, PieceBaseline baseline)
-    {
-        string normalized = NormalizePrefabName(value);
-        if (string.Equals(normalized, OriginalStationValue, StringComparison.OrdinalIgnoreCase))
-        {
-            piece.m_craftingStation = baseline.CraftingStation;
-            return true;
-        }
-
-        if (IsNone(normalized))
-        {
-            piece.m_craftingStation = null;
-            return true;
-        }
-
-        if (!TryResolveCraftingStation(normalized, out CraftingStation? station))
-        {
-            return false;
-        }
-
-        piece.m_craftingStation = station;
-        return true;
     }
 
     private static Recipe? GetOrCreateRecipe(string recipeName)
@@ -1349,5 +1332,23 @@ internal static class BottleShipsZNetSceneAwakePatch
     private static void Postfix()
     {
         BottleShipsManager.ApplyDefaultsOrRetry();
+    }
+}
+
+[HarmonyPatch(typeof(Turret), nameof(Turret.RPC_AddAmmo))]
+internal static class BottleShipsTurretRpcAddAmmoCapacityPatch
+{
+    private static bool Prefix(Turret __instance)
+    {
+        return BottleShipsManager.CanReceiveConfiguredBallistaAmmo(__instance);
+    }
+}
+
+[HarmonyPatch(typeof(Turret), nameof(Turret.OnDestroyed))]
+internal static class BottleShipsTurretOnDestroyedAmmoPatch
+{
+    private static bool Prefix(Turret __instance)
+    {
+        return !BottleShipsManager.TryDropStackedBallistaAmmo(__instance);
     }
 }
