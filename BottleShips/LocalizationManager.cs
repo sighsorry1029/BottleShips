@@ -16,6 +16,10 @@ internal static class Localizer
     private const string DefaultLanguage = "English";
     private const string TranslationExtension = ".yml";
 
+    private static readonly Action<Localization, string, string> AddWord =
+        AccessTools.MethodDelegate<Action<Localization, string, string>>(
+            AccessTools.DeclaredMethod(typeof(Localization), "AddWord", new[] { typeof(string), typeof(string) }));
+
     private static readonly IDeserializer Deserializer =
         new DeserializerBuilder().IgnoreFields().Build();
 
@@ -65,7 +69,7 @@ internal static class Localizer
 
         foreach (KeyValuePair<string, string> translation in texts)
         {
-            localization.AddWord(translation.Key, translation.Value);
+            AddWord(localization, translation.Key, translation.Value);
         }
     }
 
@@ -276,7 +280,7 @@ internal static class LocalizationSetupLanguagePatch
     }
 }
 
-[HarmonyPatch(typeof(FejdStartup), nameof(FejdStartup.SetupGui))]
+[HarmonyPatch(typeof(FejdStartup), "SetupGui")]
 internal static class FejdStartupSetupGuiPatch
 {
     [HarmonyPostfix]

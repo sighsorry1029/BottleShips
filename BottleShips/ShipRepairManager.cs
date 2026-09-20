@@ -18,6 +18,11 @@ internal static class ShipRepairManager
     private const float CostBoundaryEpsilon = 0.000001f;
     private static readonly Vector3 RequirementOffset = new(0f, -38f, 0f);
 
+    private static readonly AccessTools.FieldRef<WearNTear, ZNetView> WearView =
+        AccessTools.FieldRefAccess<WearNTear, ZNetView>("m_nview");
+    private static readonly AccessTools.FieldRef<WearNTear, float> LastRepair =
+        AccessTools.FieldRefAccess<WearNTear, float>("m_lastRepair");
+
     private static readonly Dictionary<WearNTear, float> ObservedHealth = new();
     private static ConfigEntry<int> _healthPerWood = null!;
 
@@ -68,14 +73,14 @@ internal static class ShipRepairManager
         {
             if (quote.Wood == null)
             {
-                player.Message(MessageHud.MessageType.Center, "$msg_missingrequirement");
+                player.Message(MessageHud.MessageType.Center, "$msg_missingrequirement", log: false);
                 return false;
             }
 
             woodName = quote.Wood.m_itemData.m_shared.m_name;
             if (inventory.CountItems(woodName) < quote.WoodCost)
             {
-                player.Message(MessageHud.MessageType.Center, "$msg_missingrequirement");
+                player.Message(MessageHud.MessageType.Center, "$msg_missingrequirement", log: false);
                 return false;
             }
         }
@@ -87,7 +92,7 @@ internal static class ShipRepairManager
             inventory,
             woodName,
             quote.WoodCost,
-            quote.WearNTear.m_lastRepair,
+            LastRepair(quote.WearNTear),
             _activeRepair);
         state = attempt;
         _activeRepair = attempt;
@@ -115,7 +120,7 @@ internal static class ShipRepairManager
             || attempt.RepairRequestAccepted
             || !ReferenceEquals(attempt.WearNTear, wearNTear)
             || !repaired
-            || wearNTear.m_lastRepair == attempt.LastRepairBefore)
+            || LastRepair(wearNTear) == attempt.LastRepairBefore)
         {
             return;
         }
@@ -307,9 +312,9 @@ internal static class ShipRepairManager
             || piece == null
             || piece.GetComponentInChildren<Ship>() == null
             || !piece.TryGetComponent(out WearNTear wearNTear)
-            || wearNTear.m_nview == null
-            || !wearNTear.m_nview.IsValid()
-            || wearNTear.m_nview.GetZDO() == null
+            || WearView(wearNTear) == null
+            || !WearView(wearNTear).IsValid()
+            || WearView(wearNTear).GetZDO() == null
             || ZoneSystem.instance == null
             || player.NoCostCheat()
             || ZoneSystem.instance.GetGlobalKey(GlobalKeys.NoWorkbench)
@@ -320,9 +325,9 @@ internal static class ShipRepairManager
 
         float maxHealth = wearNTear.m_health;
         float currentHealth;
-        if (wearNTear.m_nview.IsOwner())
+        if (WearView(wearNTear).IsOwner())
         {
-            currentHealth = wearNTear.m_nview.GetZDO()
+            currentHealth = WearView(wearNTear).GetZDO()
                 .GetFloat(ZDOVars.s_health, maxHealth);
             ObservedHealth[wearNTear] = currentHealth;
         }
@@ -701,7 +706,7 @@ internal static class ShipRepairManager
     }
 }
 
-[HarmonyPatch(typeof(Player), nameof(Player.Repair))]
+[HarmonyPatch(typeof(Player), "Repair")]
 internal static class BottleShipsPlayerRepairPatch
 {
     [HarmonyPriority(Priority.Last)]
@@ -728,7 +733,7 @@ internal static class BottleShipsPlayerRepairPatch
     }
 }
 
-[HarmonyPatch(typeof(Player), nameof(Player.CheckCanRemovePiece))]
+[HarmonyPatch(typeof(Player), "CheckCanRemovePiece")]
 internal static class BottleShipsPlayerCheckCanRemovePiecePatch
 {
     [HarmonyPriority(Priority.Last)]
@@ -754,7 +759,7 @@ internal static class BottleShipsWearNTearRepairPatch
     }
 }
 
-[HarmonyPatch(typeof(WearNTear), nameof(WearNTear.RPC_HealthChanged))]
+[HarmonyPatch(typeof(WearNTear), "RPC_HealthChanged")]
 internal static class BottleShipsWearNTearHealthChangedShipRepairPatch
 {
     private static void Postfix(WearNTear __instance, float health)
@@ -763,7 +768,7 @@ internal static class BottleShipsWearNTearHealthChangedShipRepairPatch
     }
 }
 
-[HarmonyPatch(typeof(WearNTear), nameof(WearNTear.OnDestroy))]
+[HarmonyPatch(typeof(WearNTear), "OnDestroy")]
 internal static class BottleShipsWearNTearOnDestroyShipRepairPatch
 {
     private static void Prefix(WearNTear __instance)
@@ -772,7 +777,7 @@ internal static class BottleShipsWearNTearOnDestroyShipRepairPatch
     }
 }
 
-[HarmonyPatch(typeof(Hud), nameof(Hud.UpdateCrosshair))]
+[HarmonyPatch(typeof(Hud), "UpdateCrosshair")]
 internal static class BottleShipsHudUpdateCrosshairShipRepairPatch
 {
     [HarmonyPriority(Priority.Last)]
@@ -782,7 +787,7 @@ internal static class BottleShipsHudUpdateCrosshairShipRepairPatch
     }
 }
 
-[HarmonyPatch(typeof(Hud), nameof(Hud.OnDestroy))]
+[HarmonyPatch(typeof(Hud), "OnDestroy")]
 internal static class BottleShipsHudOnDestroyShipRepairPatch
 {
     private static void Postfix(Hud __instance)

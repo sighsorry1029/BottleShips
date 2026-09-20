@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.13
+
+- Added large-map icons for boats and carts built by your current character, using each vehicle's build icon. Compatible Ship- and Vagon-based vehicles are included.
+- Vehicle positions refresh when the large map opens, including vehicles outside your loaded area. Pins are temporary, do not appear on the minimap, and do not track movement while the map stays open.
+- Added a map key hint and the client-only `Toggle My Vehicle Pins Key` setting at the bottom of General, defaulting to `V`. Pins start visible whenever the map opens; hiding them does not save a setting.
+- Added English and Korean vehicle-map messages and updated the mod description and map documentation.
+
+## 1.1.12
+
+- Updated the bundled ServerSync for Valheim 1.0.7, removing obsolete routed-RPC field access while preserving configuration identifiers, locking, version checks, and the existing wire format.
+- Recompiled BottleShips against the original Valheim 1.0.7 game assemblies and updated changed item initialization, player message, and effect creation calls.
+- Replaced direct compilation against private game members with public APIs, cached accessors, or Harmony field injection while preserving the existing patch targets, priorities, and state restoration.
+
 ## 1.1.11
 
 - Reduced repeated build-station lookups and resource parsing when applying piece settings to existing world objects, while preserving per-piece resource data and field-scoped updates.

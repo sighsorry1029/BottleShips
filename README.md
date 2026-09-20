@@ -69,6 +69,16 @@ BottleShips must be installed on the server and every connecting client because 
 
 * Build full-size pieces using bottles, with optional station requirements.
 
+### My boats and carts on the map
+
+The large map always starts with boats and carts built by your **current character** visible, using each vehicle's build icon. Press **V** to show or hide them while the map is open; the map key hint shows the current action. The client-only `Toggle My Vehicle Pins Key` setting appears at the bottom of General in Configuration Manager.
+
+Positions are requested from the server once when you open the large map, including vehicles outside your loaded area. They remain fixed until the map is closed and reopened. Toggling visibility reuses the snapshot and does not save a setting. Reopening the map shows the pins again. There are no minimap pins or saved map pins.
+
+The original builder's character ID determines ownership, regardless of who is driving or currently owns the network object. Vehicles without a recorded builder are excluded. Both ordinary and bottle-based construction are supported, including modded prefabs using `Ship` or `Vagon` with a `Piece` build icon. This feature is independent of PortalRules and the handling/exploration tweaks disabled by RockTheBoat.
+
+The server and clients need this version of BottleShips. Requests are limited to one per connection per 0.5 seconds and 2048 vehicles per snapshot, with a message if the list is incomplete or unavailable.
+
 ### Configuration
 
 BottleShips is configured through the normal BepInEx config file. No YAML editing is required.

@@ -39,6 +39,11 @@ internal static class BottleShipsManager
         All = BottleItem | BottleRecipe | Piece,
     }
 
+    private static readonly AccessTools.FieldRef<List<Piece>> AllPieces =
+        AccessTools.StaticFieldRefAccess<List<Piece>>(AccessTools.DeclaredField(typeof(Piece), "s_allPieces"));
+    private static readonly AccessTools.FieldRef<Turret, ZNetView> TurretView =
+        AccessTools.FieldRefAccess<Turret, ZNetView>("m_nview");
+
     private static readonly BottleTarget[] Targets =
     {
         new("Raft", "Raft", "Raft_bottle", "piece_workbench", false, 45f, 2, true, "piece_workbench", 1, "Wood:20, LeatherScraps:6, Resin:6"),
@@ -219,7 +224,7 @@ internal static class BottleShipsManager
 
             PrepareBaselineScene();
             Piece[] livePieces = (scope & ApplyScope.LivePiece) != 0
-                ? Piece.s_allPieces.ToArray()
+                ? AllPieces().ToArray()
                 : Array.Empty<Piece>();
             foreach (BottleTarget target in targets)
             {
@@ -621,9 +626,9 @@ internal static class BottleShipsManager
     {
         if (!IsConfiguredBallista(turret) ||
             !IsBallistaAmmoCapacityExpanded() ||
-            turret.m_nview == null ||
-            !turret.m_nview.IsValid() ||
-            !turret.m_nview.IsOwner())
+            TurretView(turret) == null ||
+            !TurretView(turret).IsValid() ||
+            !TurretView(turret).IsOwner())
         {
             return true;
         }
@@ -635,9 +640,9 @@ internal static class BottleShipsManager
     {
         if (!IsConfiguredBallista(turret) ||
             BallistaOriginalAmmoCapacity == null ||
-            turret.m_nview == null ||
-            !turret.m_nview.IsValid() ||
-            !turret.m_nview.IsOwner() ||
+            TurretView(turret) == null ||
+            !TurretView(turret).IsValid() ||
+            !TurretView(turret).IsOwner() ||
             !turret.m_returnAmmoOnDestroy)
         {
             return false;
@@ -670,7 +675,7 @@ internal static class BottleShipsManager
             ItemDrop dropped = UnityEngine.Object.Instantiate(ammoPrefab!, position, rotation).GetComponent<ItemDrop>()!;
             int stack = Mathf.Min(remaining, maxStackSize);
             dropped.SetStack(stack);
-            ItemDrop.OnCreateNew(dropped);
+            ItemDrop.OnCreateNew(dropped, cheated: false);
             remaining -= stack;
         }
 
@@ -1313,7 +1318,7 @@ internal static class BottleShipsManager
     }
 }
 
-[HarmonyPatch(typeof(ObjectDB), nameof(ObjectDB.Awake))]
+[HarmonyPatch(typeof(ObjectDB), "Awake")]
 internal static class BottleShipsObjectDbAwakePatch
 {
     [HarmonyPriority(Priority.Last)]
@@ -1324,7 +1329,7 @@ internal static class BottleShipsObjectDbAwakePatch
     }
 }
 
-[HarmonyPatch(typeof(ZNetScene), nameof(ZNetScene.Awake))]
+[HarmonyPatch(typeof(ZNetScene), "Awake")]
 internal static class BottleShipsZNetSceneAwakePatch
 {
     [HarmonyPriority(Priority.Last)]
@@ -1335,7 +1340,7 @@ internal static class BottleShipsZNetSceneAwakePatch
     }
 }
 
-[HarmonyPatch(typeof(Turret), nameof(Turret.RPC_AddAmmo))]
+[HarmonyPatch(typeof(Turret), "RPC_AddAmmo")]
 internal static class BottleShipsTurretRpcAddAmmoCapacityPatch
 {
     private static bool Prefix(Turret __instance)
@@ -1344,7 +1349,7 @@ internal static class BottleShipsTurretRpcAddAmmoCapacityPatch
     }
 }
 
-[HarmonyPatch(typeof(Turret), nameof(Turret.OnDestroyed))]
+[HarmonyPatch(typeof(Turret), "OnDestroyed")]
 internal static class BottleShipsTurretOnDestroyedAmmoPatch
 {
     private static bool Prefix(Turret __instance)

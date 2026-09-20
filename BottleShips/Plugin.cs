@@ -16,13 +16,27 @@ namespace BottleShips
     public class BottleShipsPlugin : BaseUnityPlugin
     {
         internal const string ModName = "BottleShips";
-        internal const string ModVersion = "1.1.11";
+        internal const string ModVersion = "1.1.13";
         internal const string Author = "sighsorry";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
         private static string ConfigFileFullPath = Paths.ConfigPath + Path.DirectorySeparatorChar + ConfigFileName;
         internal const float QuickCartDistance = 4f;
         private const float QuickCartAttachWindowSeconds = 1.5f;
+
+        // Resolve private 1.0.7 members once; keep the existing game-owned state.
+        private static readonly AccessTools.FieldRef<Trap, ZNetView> TrapView =
+            AccessTools.FieldRefAccess<Trap, ZNetView>("m_nview");
+        private static readonly Type TrapStateType = AccessTools.Inner(typeof(Trap), "TrapState");
+        private static readonly object ArmedTrapState = Enum.Parse(TrapStateType, "Armed");
+        private static readonly MethodInfo RequestTrapState =
+            AccessTools.DeclaredMethod(typeof(Trap), "RequestStateChange", new[] { TrapStateType });
+        private static readonly AccessTools.FieldRef<Vagon, ZNetView> VagonView =
+            AccessTools.FieldRefAccess<Vagon, ZNetView>("m_nview");
+        private static readonly AccessTools.FieldRef<Vagon, Humanoid> VagonUseRequester =
+            AccessTools.FieldRefAccess<Vagon, Humanoid>("m_useRequester");
+        private static readonly AccessTools.FieldRef<List<Vagon>> Vagons =
+            AccessTools.StaticFieldRefAccess<List<Vagon>>(AccessTools.DeclaredField(typeof(Vagon), "m_instances"));
 
         private readonly Harmony _harmony = new(ModGUID);
         private FileSystemWatcher? _watcher;
@@ -83,12 +97,18 @@ namespace BottleShips
 
             ShipTweaksManager.BindConfig(this);
             ShipRepairManager.BindConfig(this);
+            PlayerVehicleMap.BindConfig(this);
             BottleShipsManager.BindConfig(this);
 
             Assembly assembly = Assembly.GetExecutingAssembly();
             _harmony.PatchAll(assembly);
             BottleShipsManager.ApplyDefaultsOrRetry();
             SetupWatcher();
+        }
+
+        private void Update()
+        {
+            PlayerVehicleMap.Tick();
         }
 
         private void OnDestroy()
@@ -105,6 +125,7 @@ namespace BottleShips
 
             ShipTweaksManager.Shutdown();
             ShipRepairManager.Shutdown();
+            PlayerVehicleMap.Dispose();
             _harmony.UnpatchSelf();
             _quickCartAttachWindowTarget = null;
             _quickCartAttachWindowUntil = float.NegativeInfinity;
@@ -181,8 +202,8 @@ namespace BottleShips
             if (_trollTrapAutoReloadSeconds == null
                 || _trollTrapAutoReloadSeconds.Value <= 0
                 || trap == null
-                || trap.m_nview == null
-                || !trap.m_nview.IsValid())
+                || TrapView(trap) == null
+                || !TrapView(trap).IsValid())
             {
                 return;
             }
@@ -192,7 +213,7 @@ namespace BottleShips
                 return;
             }
 
-            if (!trap.m_nview.IsOwner())
+            if (!TrapView(trap).IsOwner())
             {
                 return;
             }
@@ -207,7 +228,7 @@ namespace BottleShips
                 return;
             }
 
-            double triggeredAt = trap.m_nview.GetZDO().GetFloat(ZDOVars.s_triggered);
+            double triggeredAt = TrapView(trap).GetZDO().GetFloat(ZDOVars.s_triggered);
             if (triggeredAt <= 0)
             {
                 return;
@@ -220,12 +241,13 @@ namespace BottleShips
                 return;
             }
 
-            trap.RequestStateChange(Trap.TrapState.Armed);
+            // TrapState is private too. Reflection is used only when a rearm is due.
+            RequestTrapState.Invoke(trap, new[] { ArmedTrapState });
         }
 
         private static bool IsTrollTrap(Trap trap)
         {
-            return trap.m_nview.GetPrefabName() == "piece_trap_troll"
+            return Utils.GetPrefabName(TrapView(trap).gameObject) == "piece_trap_troll"
                    || Utils.GetPrefabName(trap.gameObject) == "piece_trap_troll";
         }
 
@@ -240,14 +262,14 @@ namespace BottleShips
                 || player == null
                 || attachTarget != player.gameObject
                 || vagon == null
-                || vagon.m_nview == null
-                || !vagon.m_nview.IsValid()
-                || !vagon.m_nview.IsOwner())
+                || VagonView(vagon) == null
+                || !VagonView(vagon).IsValid()
+                || !VagonView(vagon).IsOwner())
             {
                 return false;
             }
 
-            bool requestPending = vagon.m_useRequester == player;
+            bool requestPending = VagonUseRequester(vagon) == player;
             bool settling = _quickCartAttachWindowTarget == vagon
                             && Time.time <= _quickCartAttachWindowUntil
                             && vagon.IsAttached(player);
@@ -317,8 +339,8 @@ namespace BottleShips
             distance = float.PositiveInfinity;
             if (vagon == null
                 || !vagon.isActiveAndEnabled
-                || vagon.m_nview == null
-                || !vagon.m_nview.IsValid()
+                || VagonView(vagon) == null
+                || !VagonView(vagon).IsValid()
                 || vagon.m_attachPoint == null
                 || vagon.transform.up.y < 0.1f)
             {
@@ -346,7 +368,7 @@ namespace BottleShips
                 return;
             }
 
-            if (player.m_hovering != null || player.m_doodadController != null)
+            if (player.GetHoverObject() != null || player.GetDoodadController() != null)
             {
                 return;
             }
@@ -367,7 +389,7 @@ namespace BottleShips
             closestVagon = null;
             float closestDistance = float.PositiveInfinity;
 
-            foreach (Vagon vagon in Vagon.m_instances)
+            foreach (Vagon vagon in Vagons())
             {
                 if (vagon == null || !IsQuickCartCandidate(vagon, player, out float distance))
                 {
@@ -430,7 +452,6 @@ namespace BottleShips
             {
                 return "02 - Ship Tweaks";
             }
-
             if (group.Length >= 2
                 && int.TryParse(group.Substring(0, 2), out int section)
                 && section >= 2
@@ -472,12 +493,12 @@ namespace BottleShips
         #endregion
     }
 
-    [HarmonyPatch(typeof(Player), nameof(Player.Update))]
+    [HarmonyPatch(typeof(Player), "Update")]
     internal static class BottleShipsPlayerUpdateExtendedCartPatch
     {
         private static void Prefix(Player __instance, out bool __state)
         {
-            __state = __instance == Player.m_localPlayer && __instance.m_doodadController != null;
+            __state = __instance == Player.m_localPlayer && __instance.GetDoodadController() != null;
         }
 
         private static void Postfix(Player __instance, bool __state)
@@ -489,7 +510,7 @@ namespace BottleShips
         }
     }
 
-    [HarmonyPatch(typeof(Vagon), nameof(Vagon.CanAttach))]
+    [HarmonyPatch(typeof(Vagon), "CanAttach")]
     internal static class BottleShipsVagonCanAttachPatch
     {
         [HarmonyPriority(Priority.First)]
@@ -520,7 +541,7 @@ namespace BottleShips
         }
     }
 
-    [HarmonyPatch(typeof(Trap), nameof(Trap.Update))]
+    [HarmonyPatch(typeof(Trap), "Update")]
     internal static class BottleShipsTrapUpdatePatch
     {
         private static void Postfix(Trap __instance)
@@ -529,7 +550,7 @@ namespace BottleShips
         }
     }
 
-    [HarmonyPatch(typeof(Turret), nameof(Turret.UpdateTarget))]
+    [HarmonyPatch(typeof(Turret), "UpdateTarget")]
     internal static class BottleShipsTurretUpdateTargetPatch
     {
         [ThreadStatic]
@@ -552,18 +573,26 @@ namespace BottleShips
         }
 
         [HarmonyPriority(Priority.First)]
-        private static void Postfix(Turret __instance, ref TargetingState __state)
+        private static void Postfix(
+            Turret __instance,
+            bool ___m_haveTarget,
+            Character ___m_target,
+            ZNetView ___m_nview,
+            ref TargetingState __state)
         {
             try
             {
                 if (__state.Active &&
-                    __instance.m_haveTarget &&
-                    BottleShipsPlugin.IsProtectedBallistaTarget(__instance.m_target) &&
-                    __instance.m_nview != null &&
-                    __instance.m_nview.IsValid())
+                    ___m_haveTarget &&
+                    BottleShipsPlugin.IsProtectedBallistaTarget(___m_target) &&
+                    ___m_nview != null &&
+                    ___m_nview.IsValid())
                 {
-                    __instance.m_nview.InvokeRPC(ZNetView.Everybody, "RPC_SetTarget", ZDOID.None);
-                    __instance.m_lostTargetEffect.Create(__instance.transform.position, __instance.transform.rotation);
+                    ___m_nview.InvokeRPC(ZNetView.Everybody, "RPC_SetTarget", ZDOID.None);
+                    __instance.m_lostTargetEffect.Create(
+                        __instance.transform.position,
+                        __instance.transform.rotation,
+                        gamepadEffectsExclusiveToPlayer: ZDOID.None);
                 }
             }
             finally
@@ -762,7 +791,7 @@ namespace BottleShips
         }
     }
 
-    [HarmonyPatch(typeof(Turret), nameof(Turret.RPC_SetTarget))]
+    [HarmonyPatch(typeof(Turret), "RPC_SetTarget")]
     internal static class BottleShipsTurretRpcSetTargetPatch
     {
         private static void Prefix(ref ZDOID character)

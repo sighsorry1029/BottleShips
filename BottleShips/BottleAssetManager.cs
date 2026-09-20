@@ -183,7 +183,7 @@ internal static class BottleAssetManager
     }
 }
 
-[HarmonyPatch(typeof(ObjectDB), nameof(ObjectDB.Awake))]
+[HarmonyPatch(typeof(ObjectDB), "Awake")]
 internal static class BottleAssetObjectDBAwakePatch
 {
     [HarmonyPriority(Priority.Last)]
@@ -196,17 +196,21 @@ internal static class BottleAssetObjectDBAwakePatch
 [HarmonyPatch(typeof(ObjectDB), nameof(ObjectDB.CopyOtherDB))]
 internal static class BottleAssetObjectDBCopyOtherDBPatch
 {
+    private static readonly Action<ObjectDB> UpdateRegisters =
+        AccessTools.MethodDelegate<Action<ObjectDB>>(
+            AccessTools.DeclaredMethod(typeof(ObjectDB), "UpdateRegisters", Type.EmptyTypes));
+
     [HarmonyPriority(Priority.Last)]
     [HarmonyBefore("sighsorry.DataForge")]
     private static void Postfix(ObjectDB __instance)
     {
         BottleAssetManager.RegisterWithObjectDB(__instance);
-        __instance.UpdateRegisters();
+        UpdateRegisters(__instance);
         BottleShipsManager.ApplyDefaultsOrRetry();
     }
 }
 
-[HarmonyPatch(typeof(ZNetScene), nameof(ZNetScene.Awake))]
+[HarmonyPatch(typeof(ZNetScene), "Awake")]
 internal static class BottleAssetZNetSceneAwakePatch
 {
     [HarmonyPriority(Priority.Last)]

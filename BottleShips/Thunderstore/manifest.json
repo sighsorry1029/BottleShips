@@ -1,9 +1,9 @@
 {
   "name": "BottleShips",
-  "version_number": "1.1.11",
+  "version_number": "1.1.13",
   "website_url": "https://discord.gg/mbkPcvu9ax",
-  "description": "Adds bottle items for ships and carts. Build full-size pieces from bottles, tune recipes and stations, quick-attach carts, auto-reload troll traps, resize battering rams, and improve ballista targeting.",
+  "description": "Find your ships and carts on the world map. Carry boats, carts, portals and siege weapons in bottles. Customize recipes, repair ships with wood, boost sailing and rowing, attach carts easily, auto-reload troll traps, and improve ballista targeting.",
   "dependencies": [
-    "denikson-BepInExPack_Valheim-5.4.2333"
+    "denikson-BepInExPack_Valheim-5.4.2350"
   ]
 }
