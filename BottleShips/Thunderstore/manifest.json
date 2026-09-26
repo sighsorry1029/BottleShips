@@ -1,9 +1,9 @@
 {
   "name": "BottleShips",
-  "version_number": "1.1.13",
+  "version_number": "1.1.14",
   "website_url": "https://discord.gg/mbkPcvu9ax",
   "description": "Find your ships and carts on the world map. Carry boats, carts, portals and siege weapons in bottles. Customize recipes, repair ships with wood, boost sailing and rowing, attach carts easily, auto-reload troll traps, and improve ballista targeting.",
   "dependencies": [
-    "denikson-BepInExPack_Valheim-5.4.2350"
+    "denikson-BepInExPack_Valheim-5.4.2351"
   ]
 }

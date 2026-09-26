@@ -24,7 +24,9 @@ internal static class ShipRepairManager
         AccessTools.FieldRefAccess<WearNTear, float>("m_lastRepair");
 
     private static readonly Dictionary<WearNTear, float> ObservedHealth = new();
+    private static readonly HashSet<int> AshlandsFieldRepairPrefabs = new();
     private static ConfigEntry<int> _healthPerWood = null!;
+    private static ConfigEntry<string> _ashlandsFieldRepairPrefabs = null!;
 
     [ThreadStatic]
     private static RepairAttempt? _activeRepair;
@@ -48,6 +50,11 @@ internal static class ShipRepairManager
             _healthPerWood.SettingChanged -= HandleConfigChanged;
         }
 
+        if (_ashlandsFieldRepairPrefabs != null)
+        {
+            _ashlandsFieldRepairPrefabs.SettingChanged -= HandleAshlandsPrefabsChanged;
+        }
+
         _healthPerWood = plugin.config(
             ConfigGroup,
             "Ship Repair Durability Per Wood",
@@ -57,6 +64,15 @@ internal static class ShipRepairManager
                 new AcceptableValueRange<int>(0, 1000)),
             order: 970);
         _healthPerWood.SettingChanged += HandleConfigChanged;
+
+        _ashlandsFieldRepairPrefabs = plugin.config(
+            ConfigGroup,
+            "Ashlands Field Repair Prefabs",
+            "VikingShip_Ashlands",
+            "Comma-separated, case-sensitive ship prefab names allowed to use field repair in boiling Ashlands waters. The ship's position and the game's Ashlands ocean check are used, including custom boiling regions provided by Expand World Data. Does not restrict repairs within the required station range or change existing no-cost/no-workbench exceptions. Empty means no ships may use field repair in boiling waters. Uses ship prefab names, not bottle item names.",
+            order: 960);
+        _ashlandsFieldRepairPrefabs.SettingChanged += HandleAshlandsPrefabsChanged;
+        HandleAshlandsPrefabsChanged(null, EventArgs.Empty);
     }
 
     internal static bool BeginRepair(Player player, out RepairAttempt? state)
@@ -65,6 +81,13 @@ internal static class ShipRepairManager
         if (!TryGetFieldRepairQuote(player, player.GetHoveringPiece(), out RepairQuote quote))
         {
             return true;
+        }
+
+        if (!IsFieldRepairAllowed(quote))
+        {
+            player.Message(MessageHud.MessageType.Center,
+                "$sighsorry_bottleships_ship_repair_boiling_blocked", log: false);
+            return false;
         }
 
         Inventory inventory = player.GetInventory();
@@ -204,6 +227,7 @@ internal static class ShipRepairManager
                 player,
                 player.GetHoveringPiece(),
                 out RepairQuote quote)
+            || !IsFieldRepairAllowed(quote)
             || quote.WoodCost <= 0
             || quote.Wood == null
             || !EnsureRequirementWidget(hud))
@@ -272,6 +296,12 @@ internal static class ShipRepairManager
             _healthPerWood.SettingChanged -= HandleConfigChanged;
         }
 
+        if (_ashlandsFieldRepairPrefabs != null)
+        {
+            _ashlandsFieldRepairPrefabs.SettingChanged -= HandleAshlandsPrefabsChanged;
+        }
+        AshlandsFieldRepairPrefabs.Clear();
+
         _activeRepair = null;
         if (_requirementWidget != null)
         {
@@ -301,16 +331,44 @@ internal static class ShipRepairManager
         }
     }
 
+    private static void HandleAshlandsPrefabsChanged(object? sender, EventArgs args)
+    {
+        AshlandsFieldRepairPrefabs.Clear();
+        foreach (string entry in _ashlandsFieldRepairPrefabs.Value.Split(','))
+        {
+            string prefabName = entry.Trim();
+            if (prefabName.Length > 0)
+            {
+                AshlandsFieldRepairPrefabs.Add(prefabName.GetStableHashCode());
+            }
+        }
+        HideRequirementWidget();
+    }
+
+    private static bool IsFieldRepairAllowed(RepairQuote quote)
+    {
+        if (AshlandsFieldRepairPrefabs.Contains(WearView(quote.WearNTear).GetZDO().GetPrefab())
+            || WorldGenerator.instance == null)
+        {
+            return true;
+        }
+
+        // Ship.TakeAshlandsDamage uses the same check. EWD patches this public API
+        // for its boiling regions, so neither weather names nor an EWD dependency are needed.
+        return WorldGenerator.GetAshlandsOceanGradient(quote.Ship.transform.position) < 0f;
+    }
+
     private static bool TryGetFieldRepairQuote(
         Player? player,
         Piece? piece,
         out RepairQuote quote)
     {
         quote = default;
+        Ship? ship;
         if (!FieldRepairEnabled
             || player == null
             || piece == null
-            || piece.GetComponentInChildren<Ship>() == null
+            || (ship = piece.GetComponentInChildren<Ship>()) == null
             || !piece.TryGetComponent(out WearNTear wearNTear)
             || WearView(wearNTear) == null
             || !WearView(wearNTear).IsValid()
@@ -356,7 +414,7 @@ internal static class ShipRepairManager
             TryGetWood(out wood);
         }
 
-        quote = new RepairQuote(piece, wearNTear, wood, woodCost);
+        quote = new RepairQuote(piece, ship, wearNTear, wood, woodCost);
         return true;
     }
 
@@ -688,17 +746,20 @@ internal static class ShipRepairManager
     private readonly struct RepairQuote
     {
         internal readonly Piece Piece;
+        internal readonly Ship Ship;
         internal readonly WearNTear WearNTear;
         internal readonly ItemDrop? Wood;
         internal readonly int WoodCost;
 
         internal RepairQuote(
             Piece piece,
+            Ship ship,
             WearNTear wearNTear,
             ItemDrop? wood,
             int woodCost)
         {
             Piece = piece;
+            Ship = ship;
             WearNTear = wearNTear;
             Wood = wood;
             WoodCost = woodCost;

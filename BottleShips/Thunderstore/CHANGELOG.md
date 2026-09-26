@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.14
+
+- Added the server-synced `Ashlands Field Repair Prefabs` whitelist for Wood repairs in boiling waters. Defaults to `VikingShip_Ashlands` (Drakkar); an empty list allows no field repairs in those waters.
+- Checks the ship's position using the game's Ashlands ocean damage-region check, including Expand World Data's custom boiling regions without additional biome configuration or a hard dependency.
+- Preserved repairs within station range and existing no-cost/no-workbench exceptions. Blocked field repairs consume no Wood, hide the repair-cost indicator, and display an English or Korean message.
+- Updated the BepInExPack dependency to `5.4.2351`.
+
 ## 1.1.13
 
 - Added large-map icons for boats and carts built by your current character, using each vehicle's build icon. Compatible Ship- and Vagon-based vehicles are included.
