@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.15
+
+- Added a short Power Paddling HUD hint for eligible helmsmen and seated passengers at Back or Slow, with English and Korean text and the player's current Run key or gamepad button.
+- Positioned the helmsman's hint beside the steering icon and the seated passenger's hint at the bottom center of the screen, independent of camera direction.
+- Added the client-only `Show Power Paddling HUD` On/Off setting, enabled by default and independent of the game's Key Hints setting. Hiding the hint leaves Power Paddling behavior unchanged.
+
 ## 1.1.14
 
 - Added the server-synced `Ashlands Field Repair Prefabs` whitelist for Wood repairs in boiling waters. Defaults to `VikingShip_Ashlands` (Drakkar); an empty list allows no field repairs in those waters.

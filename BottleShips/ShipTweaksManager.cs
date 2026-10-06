@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using BepInEx.Bootstrap;
 using BepInEx.Configuration;
 using HarmonyLib;
+using TMPro;
 using UnityEngine;
 
 namespace BottleShips;
@@ -41,6 +42,7 @@ internal static class ShipTweaksManager
     private static ConfigEntry<float> _exploreRadiusMultiplier = null!;
     private static ConfigEntry<float> _shipPowerMultiplier = null!;
     private static ConfigEntry<float> _powerPaddlingBonusPerPlayer = null!;
+    private static ConfigEntry<BottleShipsPlugin.Toggle> _showPowerPaddlingHud = null!;
     private static bool _rockTheBoatChecked;
     private static bool _rockTheBoatInstalled;
     private static bool _rockTheBoatWarningLogged;
@@ -48,6 +50,13 @@ internal static class ShipTweaksManager
     private static bool _localPowerPaddlingRequested;
     private static float _nextPowerPaddlingHeartbeat;
     private static float _powerPaddlingFovOffset;
+    private static Player? _powerPaddlingHintPlayer;
+    private static Ship? _powerPaddlingHintShip;
+    private static Hud? _powerPaddlingHud;
+    private static TMP_Text? _powerPaddlingHint;
+    private static string? _powerPaddlingHintLanguage;
+    private static string? _powerPaddlingHintKey;
+    private static float _nextPowerPaddlingHintRefresh;
 
     internal static void BindConfig(BottleShipsPlugin plugin)
     {
@@ -81,6 +90,13 @@ internal static class ShipTweaksManager
                 new AcceptableValueRange<float>(0f, 1f)),
             order: 980);
         _powerPaddlingBonusPerPlayer.SettingChanged += HandlePowerPaddlingConfigChanged;
+        _showPowerPaddlingHud = plugin.config(
+            ConfigGroup,
+            "Show Power Paddling HUD",
+            BottleShipsPlugin.Toggle.On,
+            "Client-only. Show a short paddling hint while eligible to paddle: beside the steering controls for the helmsman, or at the bottom center for seated passengers. Independent of the game's Key Hints setting. Turning this off hides only the HUD; Power Paddling still works.",
+            synchronizedSetting: false,
+            order: 975);
     }
 
     internal static bool TryApplyExploreRadius(Minimap minimap, Player player, out ExploreRadiusState state)
@@ -229,15 +245,19 @@ internal static class ShipTweaksManager
         }
 
         Ship? ship = null;
-        bool requested = PowerPaddlingEnabled
+        bool available = PowerPaddlingEnabled
                          && TryGetLocalPowerPaddlingShip(player, out ship)
                          && ship != null
                          && IsPowerPaddlingGear(ship)
                          && !PlayerController.HasInputDelay
-                         && TakeInput(input, false)
-                         && runPressedWhileStamina
+                         && TakeInput(input, false);
+        bool requested = available && runPressedWhileStamina
                          && (ZInput.GetButton("Run") || ZInput.GetButton("JoyRun"))
                          && player.HaveStamina();
+
+        // Reuse the input decision so the HUD does not search for seats or boats every frame.
+        _powerPaddlingHintPlayer = player;
+        _powerPaddlingHintShip = available ? ship : null;
 
         if (requested)
         {
@@ -252,6 +272,7 @@ internal static class ShipTweaksManager
     {
         if (player == Player.m_localPlayer)
         {
+            ClearPowerPaddlingHint();
             SetLocalPowerPaddlingRequest(null, requested: false);
         }
     }
@@ -260,6 +281,10 @@ internal static class ShipTweaksManager
     {
         PowerPaddlingRequests.Remove(ship);
         PowerPaddlingPhysicsContexts.Remove(ship);
+        if (_powerPaddlingHintShip == ship)
+        {
+            ClearPowerPaddlingHint();
+        }
         if (_localPowerPaddlingShip == ship)
         {
             SetLocalPowerPaddlingRequest(null, requested: false);
@@ -312,6 +337,126 @@ internal static class ShipTweaksManager
         PowerPaddlingPhysicsContexts.Clear();
         InvalidPowerPaddlingSenders.Clear();
         _powerPaddlingFovOffset = 0f;
+        ClearPowerPaddlingHint();
+        ClearPowerPaddlingHud();
+    }
+
+    internal static void UpdatePowerPaddlingHud(Hud hud)
+    {
+        if (!ReferenceEquals(_powerPaddlingHud, hud))
+        {
+            ClearPowerPaddlingHud();
+            _powerPaddlingHud = hud;
+        }
+
+        Player player = Player.m_localPlayer;
+        GameObject root = hud.m_rootObject;
+        Ship? ship = _powerPaddlingHintShip;
+        bool show = _showPowerPaddlingHud != null && _showPowerPaddlingHud.Value == BottleShipsPlugin.Toggle.On
+                    && player != null && player == _powerPaddlingHintPlayer
+                    && ship != null && IsPowerPaddlingGear(ship)
+                    && PowerPaddlingEnabled && !player.IsDead() && !player.IsTeleporting()
+                    && !player.InCutscene() && root != null && hud.IsVisible()
+                    && !Hud.IsUserHidden()
+                    && !Game.IsPaused() && !Menu.IsVisible() && !Console.IsVisible() && !TextInput.IsVisible()
+                    && !(TextViewer.instance != null && TextViewer.instance.IsVisible())
+                    && !InventoryGui.IsVisible() && !Minimap.IsOpen() && !StoreGui.IsVisible()
+                    && !Hud.InRadial() && !(Chat.instance != null && Chat.instance.HasFocus());
+        if (!show || root == null || ship == null || player == null)
+        {
+            if (_powerPaddlingHint != null) _powerPaddlingHint.gameObject.SetActive(false);
+            return;
+        }
+
+        bool steering = player.GetControlledShip() == ship;
+        Vector3 position = Vector3.zero;
+        if (steering)
+        {
+            // Only the helmsman's hint follows the world-space steering icon.
+            Camera camera = Utils.GetMainCamera();
+            if (camera == null || ship.m_controlGuiPos == null)
+            {
+                if (_powerPaddlingHint != null) _powerPaddlingHint.gameObject.SetActive(false);
+                return;
+            }
+            position = camera.WorldToScreenPointScaled(ship.m_controlGuiPos.position);
+            if (position.z <= 0f)
+            {
+                if (_powerPaddlingHint != null) _powerPaddlingHint.gameObject.SetActive(false);
+                return;
+            }
+        }
+
+        if (_powerPaddlingHint == null)
+        {
+            if (hud.m_hoverName == null) return;
+            GameObject widget = new("BottleShipsPowerPaddlingHint", typeof(RectTransform), typeof(TextMeshProUGUI));
+            widget.SetActive(false);
+            widget.transform.SetParent(root.transform, worldPositionStays: false);
+            _powerPaddlingHint = widget.GetComponent<TextMeshProUGUI>();
+            _powerPaddlingHint.font = hud.m_hoverName.font;
+            _powerPaddlingHint.fontSharedMaterial = hud.m_hoverName.fontSharedMaterial;
+            _powerPaddlingHint.spriteAsset = hud.m_hoverName.spriteAsset;
+            _powerPaddlingHint.fontSize = 22f;
+            _powerPaddlingHint.color = Color.white;
+            _powerPaddlingHint.richText = true;
+            _powerPaddlingHint.raycastTarget = false;
+            _powerPaddlingHint.textWrappingMode = TextWrappingModes.NoWrap;
+            _powerPaddlingHint.rectTransform.sizeDelta = new Vector2(360f, 40f);
+        }
+
+        RectTransform hintRect = _powerPaddlingHint.rectTransform;
+        if (steering)
+        {
+            _powerPaddlingHint.alignment = TextAlignmentOptions.Left;
+            hintRect.anchorMin = hintRect.anchorMax = new Vector2(0.5f, 0.5f);
+            hintRect.pivot = new Vector2(0f, 0.5f);
+            hintRect.position = new Vector3(position.x, position.y, 0f);
+            // Apply spacing in HUD units so the gap follows the game's UI scale.
+            hintRect.anchoredPosition += new Vector2(40f, 0f);
+        }
+        else
+        {
+            _powerPaddlingHint.alignment = TextAlignmentOptions.Center;
+            hintRect.anchorMin = hintRect.anchorMax = new Vector2(0.5f, 0f);
+            hintRect.pivot = new Vector2(0.5f, 0.5f);
+            hintRect.anchoredPosition3D = new Vector3(0f, 390f, 0f);
+        }
+
+        bool wasHidden = !_powerPaddlingHint.gameObject.activeSelf;
+        if (wasHidden || Time.unscaledTime >= _nextPowerPaddlingHintRefresh)
+        {
+            // Poll bindings only while visible, including changes made in the game's settings.
+            _nextPowerPaddlingHintRefresh = Time.unscaledTime + 0.25f;
+            string language = Localization.instance.GetSelectedLanguage();
+            string key = Localization.instance.GetBoundKeyString(ZInput.IsGamepadActive() ? "JoyRun" : "Run", true);
+            if (wasHidden || _powerPaddlingHintLanguage != language || _powerPaddlingHintKey != key)
+            {
+                _powerPaddlingHint.text = Localization.instance.Localize("$sighsorry_bottleships_paddling_hint")
+                    .Replace("{0}", key);
+                _powerPaddlingHintLanguage = language;
+                _powerPaddlingHintKey = key;
+            }
+        }
+        if (wasHidden) _powerPaddlingHint.gameObject.SetActive(true);
+    }
+
+    internal static void ClearPowerPaddlingHud(Hud? hud = null)
+    {
+        if (hud != null && !ReferenceEquals(_powerPaddlingHud, hud)) return;
+        if (_powerPaddlingHint != null) UnityEngine.Object.Destroy(_powerPaddlingHint.gameObject);
+        _powerPaddlingHint = null;
+        _powerPaddlingHud = null;
+        _powerPaddlingHintLanguage = null;
+        _powerPaddlingHintKey = null;
+        _nextPowerPaddlingHintRefresh = 0f;
+    }
+
+    private static void ClearPowerPaddlingHint()
+    {
+        _powerPaddlingHintPlayer = null;
+        _powerPaddlingHintShip = null;
+        if (_powerPaddlingHint != null) _powerPaddlingHint.gameObject.SetActive(false);
     }
 
     private static bool PowerPaddlingEnabled =>
@@ -330,6 +475,7 @@ internal static class ShipTweaksManager
 
     private static void ClearPowerPaddlingState()
     {
+        ClearPowerPaddlingHint();
         SetLocalPowerPaddlingRequest(null, requested: false);
         PowerPaddlingRequests.Clear();
         PowerPaddlingPhysicsContexts.Clear();
@@ -797,6 +943,18 @@ internal static class BottleShipsPlayerControllerFixedUpdatePowerPaddlingPatch
     {
         ShipTweaksManager.UpdatePowerPaddlingInput(__instance, ___m_character, ___m_runPressedWhileStamina);
     }
+}
+
+[HarmonyPatch(typeof(Hud), "LateUpdate")]
+internal static class BottleShipsHudLateUpdatePowerPaddlingPatch
+{
+    private static void Postfix(Hud __instance) => ShipTweaksManager.UpdatePowerPaddlingHud(__instance);
+}
+
+[HarmonyPatch(typeof(Hud), "OnDestroy")]
+internal static class BottleShipsHudOnDestroyPowerPaddlingPatch
+{
+    private static void Prefix(Hud __instance) => ShipTweaksManager.ClearPowerPaddlingHud(__instance);
 }
 
 [HarmonyPatch(typeof(Player), nameof(Player.StopDoodadControl))]

@@ -1,6 +1,6 @@
 {
   "name": "BottleShips",
-  "version_number": "1.1.14",
+  "version_number": "1.1.15",
   "website_url": "https://discord.gg/mbkPcvu9ax",
   "description": "Find your ships and carts on the world map. Carry boats, carts, portals and siege weapons in bottles. Customize recipes, repair ships with wood, boost sailing and rowing, attach carts easily, auto-reload troll traps, and improve ballista targeting.",
   "dependencies": [
