@@ -51,6 +51,12 @@ namespace BottleShipsRepairChecks
         public ConfigEntry<T> Get<T>(string name) => (ConfigEntry<T>)Config[name];
     }
     public sealed class Logger { public void LogError(object message) { } public void LogWarning(object message) { } }
+    public static class PathOfValheimanCompat
+    {
+        public static bool IsMassRepairActive;
+        public static readonly HashSet<Player> FreeShipRepairPlayers = new();
+        public static bool HasFreeShipRepair(Player player) => FreeShipRepairPlayers.Contains(player);
+    }
     public struct Vector2
     {
         public float x, y;
@@ -263,6 +269,8 @@ namespace BottleShipsRepairChecks
             ZoneSystem.instance = new(); WorldGenerator.instance = new(); WorldGenerator.Gradient = _ => gradient; WorldGenerator.Calls = 0;
             ObjectDB.instance = new(); ZNetScene.instance = new(); CraftingStation.InRange = (_, _) => null;
             UnityObject.Created = InventoryGui.Calls = 0;
+            PathOfValheimanCompat.IsMassRepairActive = false;
+            PathOfValheimanCompat.FreeShipRepairPlayers.Clear();
             _piece = new Piece(); _wear = new WearNTear { gameObject = _piece.gameObject };
             _piece.gameObject.Components[typeof(Ship)] = new Ship { gameObject = _piece.gameObject }; _piece.gameObject.Components[typeof(WearNTear)] = _wear;
             _wear.m_nview.Data.Prefab = prefab.GetStableHashCode();
@@ -284,6 +292,16 @@ namespace BottleShipsRepairChecks
             Check(!ShipRepairManager.TryBypassStationCheck(_player, _piece, ref station) && !station, label + ": station check not bypassed");
             Check(_player.Inventory.Consumed == 0 && _player.Inventory.Wood == 100, label + ": wood preserved");
             Check(_player.Messages.Last() == "$sighsorry_bottleships_ship_repair_boiling_blocked", label + ": explicit rejection");
+        }
+        private static void MassResult(bool expected, string label, bool original = true)
+        {
+            // Invoke the production Harmony entry point; the harness does not patch a game method.
+            object[] args = { _player, _piece, original };
+            typeof(BottleShipsPlayerCheckCanRemovePiecePatch)
+                .GetMethod("Postfix", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, args);
+            Check((bool)args[2] == expected, label);
+            Check(_player.Inventory.Consumed == 0 && ReadStatic("_activeRepair") == null,
+                label + ": no payment or transaction opened");
         }
         public static string Run()
         {
@@ -333,6 +351,7 @@ namespace BottleShipsRepairChecks
             _wear.m_lastRepair++; ShipRepairManager.RecordRepairResult(_wear, true);
             ShipRepairManager.FinishRepair(ref accepted); ShipRepairManager.FinishRepair(ref accepted);
             Check(_player.Inventory.Consumed == 4 && ReadStatic("_activeRepair") == null, "Accepted repair retains existing rounded cost and consumes once");
+            CheckPathOfValheimanRepair();
             var prefabs = _plugin.Get<string>(ListKey); var health = _plugin.Get<int>(HealthKey);
             ShipRepairManager.BindConfig(_plugin);
             Check(prefabs.Subscribers == 1 && health.Subscribers == 1, "Rebinding does not duplicate config handlers");
@@ -341,6 +360,80 @@ namespace BottleShipsRepairChecks
             prefabs.Value = "Karve";
             Check(((HashSet<int>)ReadStatic("AshlandsFieldRepairPrefabs")!).Count == 0, "Detached config no longer mutates cleared state");
             return $"{_checks} ship repair checks passed (complete production feature; game, Unity, Harmony and config boundaries are test doubles; no actual game execution).";
+        }
+
+        private static void CheckPathOfValheimanRepair()
+        {
+            Reset(gradient: -1);
+            var hud = new Hud();
+            ShipRepairManager.UpdateRequirementWidget(hud, _player);
+            var widget = (GameObject)ReadStatic("_requirementWidget")!;
+            Check(widget.activeSelf, "No PoV node retains paid-repair HUD");
+            PathOfValheimanCompat.FreeShipRepairPlayers.Add(_player);
+            _player.Inventory.Wood = 0;
+            Allowed("PoV node delegates cold-water repair without Wood", field: false);
+            ShipRepairManager.UpdateRequirementWidget(hud, _player);
+            Check(!widget.activeSelf && InventoryGui.Calls == 1, "Node acquisition hides existing Wood HUD");
+            WorldGenerator.Gradient = _ => 1;
+            WorldGenerator.Calls = 0;
+            Allowed("PoV node delegates boiling-water repair", field: false);
+            Check(WorldGenerator.Calls == 0 && _player.Messages.Count == 0,
+                "Delegated repair does not apply field-only boiling restriction");
+            ShipRepairManager.UpdateRequirementWidget(hud, _player);
+            Check(!widget.activeSelf, "PoV free repair shows no Wood HUD in boiling water");
+            PathOfValheimanCompat.FreeShipRepairPlayers.Remove(_player);
+            _player.Inventory.Wood = 100;
+            Denied("Refunded PoV node restores boiling restriction");
+            WorldGenerator.Gradient = _ => -1;
+            ShipRepairManager.UpdateRequirementWidget(hud, _player);
+            Check(widget.activeSelf && UnityObject.Created == 1, "Refund restores paid HUD without rebuilding it");
+            Check(ShipRepairManager.BeginRepair(_player, out var paid) && paid != null,
+                "Refund restores paid transaction");
+            _wear.m_lastRepair++; ShipRepairManager.RecordRepairResult(_wear, true);
+            ShipRepairManager.FinishRepair(ref paid);
+            Check(_player.Inventory.Consumed == 4, "Refund restores actual Wood charge");
+
+            Reset(gradient: -1);
+            MassResult(true, "Outside mass-repair scope station result remains unchanged");
+            PathOfValheimanCompat.IsMassRepairActive = true;
+            MassResult(false, "Mass repair excludes paid Build Station=None ship");
+            _piece.m_craftingStation = new CraftingStation();
+            MassResult(false, "Mass repair excludes paid ship with required station outside range");
+            MassResult(false, "Mass repair never promotes an existing denied result", original: false);
+            _wear.m_nview.Owner = false;
+            MassResult(false, "Mass repair also excludes remotely owned paid ship");
+            _player.Inventory.Wood = 0;
+            MassResult(false, "Mass repair cannot bypass missing Wood");
+            PathOfValheimanCompat.FreeShipRepairPlayers.Add(_player);
+            MassResult(true, "Free-repair node permits PoV area repair without Wood");
+            MassResult(false, "Free-repair node does not override a previous denial", original: false);
+            WorldGenerator.Gradient = _ => 1;
+            MassResult(true, "Free-repair node delegates boiling area repair");
+            PathOfValheimanCompat.FreeShipRepairPlayers.Clear();
+            MassResult(false, "Node refund immediately excludes paid area repair again");
+            PathOfValheimanCompat.IsMassRepairActive = false;
+            MassResult(true, "Leaving mass scope restores ordinary station-result handling");
+
+            Reset(); PathOfValheimanCompat.IsMassRepairActive = true;
+            _player.NoCost = true;
+            MassResult(true, "Mass repair preserves no-cost exception");
+            _player.NoCost = false; ZoneSystem.instance.Keys.Add(GlobalKeys.NoWorkbench);
+            MassResult(true, "Mass repair preserves no-workbench exception");
+            ZoneSystem.instance.Keys.Clear(); CraftingStation.InRange = (_, _) => new CraftingStation();
+            MassResult(true, "Mass repair preserves Build Station=None fallback station in range");
+            _piece.m_craftingStation = new CraftingStation();
+            MassResult(true, "Mass repair preserves explicit station in range");
+            CraftingStation.InRange = (_, _) => null; _piece.m_craftingStation = null;
+            _plugin.Get<int>(HealthKey).Value = 0;
+            MassResult(true, "Disabled field repair leaves PoV area repair alone");
+            _plugin.Get<int>(HealthKey).Value = 200;
+            ZoneSystem.instance.Keys.Add(_piece.FreeBuildKey());
+            MassResult(false, "Zero-Wood global build key does not bypass boiling restriction");
+            WorldGenerator.Gradient = _ => -1;
+            MassResult(true, "Zero-Wood global build key preserves free area repair in cold water");
+            ZoneSystem.instance.Keys.Clear();
+            _piece.gameObject.Components.Remove(typeof(Ship));
+            MassResult(true, "Mass repair does not restrict ordinary structures");
         }
     }
 }

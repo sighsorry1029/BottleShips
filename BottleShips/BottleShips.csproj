@@ -121,6 +121,7 @@
         <Compile Include="BottleShipsManager.cs"/>
         <Compile Include="ShipTweaksManager.cs"/>
         <Compile Include="ShipRepairManager.cs"/>
+        <Compile Include="PathOfValheimanCompat.cs"/>
         <Compile Include="PlayerVehicleMap.cs"/>
         <Compile Include="PlayerVehicleMap.Network.cs"/>
         <Compile Include="Plugin.cs"/>

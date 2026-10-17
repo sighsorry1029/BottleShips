@@ -13,10 +13,11 @@ using UnityEngine;
 namespace BottleShips
 {
     [BepInPlugin(ModGUID, ModName, ModVersion)]
+    [BepInDependency(PathOfValheimanCompat.PluginGuid, BepInDependency.DependencyFlags.SoftDependency)]
     public class BottleShipsPlugin : BaseUnityPlugin
     {
         internal const string ModName = "BottleShips";
-        internal const string ModVersion = "1.1.15";
+        internal const string ModVersion = "1.1.16";
         internal const string Author = "sighsorry";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
@@ -102,6 +103,7 @@ namespace BottleShips
 
             Assembly assembly = Assembly.GetExecutingAssembly();
             _harmony.PatchAll(assembly);
+            PathOfValheimanCompat.Initialize(_harmony);
             BottleShipsManager.ApplyDefaultsOrRetry();
             SetupWatcher();
         }
@@ -126,6 +128,7 @@ namespace BottleShips
             ShipTweaksManager.Shutdown();
             ShipRepairManager.Shutdown();
             PlayerVehicleMap.Dispose();
+            PathOfValheimanCompat.Shutdown();
             _harmony.UnpatchSelf();
             _quickCartAttachWindowTarget = null;
             _quickCartAttachWindowUntil = float.NegativeInfinity;

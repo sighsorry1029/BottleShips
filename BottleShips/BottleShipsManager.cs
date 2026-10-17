@@ -79,6 +79,31 @@ internal static class BottleShipsManager
 
     internal static IEnumerable<string> BottleItemNames => Targets.Select(target => target.BottlePrefab);
 
+    internal static void ApplyShipRemovalSetting(Ship ship)
+    {
+        if (!ConfigBound || !PathOfValheimanCompat.IsLoaded || ship == null)
+        {
+            return;
+        }
+
+        Piece? piece = ship.GetComponent<Piece>() ?? ship.GetComponentInParent<Piece>();
+        if (piece == null)
+        {
+            return;
+        }
+
+        foreach (BottleTarget target in Targets)
+        {
+            if (target.Config != null && PrefabNameEquals(piece.gameObject, target.PiecePrefab))
+            {
+                // PoV enables removal in Ship.Awake. Respect this managed piece's
+                // setting while leaving normal access, passenger and cargo checks intact.
+                piece.m_canBeRemoved = target.Config.CanBeRemoved.Value == BottleShipsPlugin.Toggle.On;
+                return;
+            }
+        }
+    }
+
     internal static void BindConfig(BottleShipsPlugin plugin)
     {
         if (ConfigBound)
@@ -1315,6 +1340,17 @@ internal static class BottleShipsManager
 
             siegeMachine.m_chargeOffsetDistance = _chargeOffsetDistance * size;
         }
+    }
+}
+
+[HarmonyPatch(typeof(Ship), "Awake")]
+internal static class BottleShipsShipAwakeRemovalSettingPatch
+{
+    [HarmonyPriority(Priority.Last)]
+    [HarmonyAfter(PathOfValheimanCompat.PluginGuid)]
+    private static void Postfix(Ship __instance)
+    {
+        BottleShipsManager.ApplyShipRemovalSetting(__instance);
     }
 }
 

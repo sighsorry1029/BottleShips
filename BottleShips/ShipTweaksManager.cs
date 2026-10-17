@@ -195,7 +195,7 @@ internal static class ShipTweaksManager
             || context.Applied
             || context.Bonus <= 0f
             || fixedDeltaTime <= 0f
-            || !IsPowerPaddlingGear(ship)
+            || !CanPowerPaddle(ship)
             || ShipView(ship) == null
             || !ShipView(ship).IsValid()
             || !ShipView(ship).IsOwner()
@@ -248,7 +248,7 @@ internal static class ShipTweaksManager
         bool available = PowerPaddlingEnabled
                          && TryGetLocalPowerPaddlingShip(player, out ship)
                          && ship != null
-                         && IsPowerPaddlingGear(ship)
+                         && CanPowerPaddle(ship)
                          && !PlayerController.HasInputDelay
                          && TakeInput(input, false);
         bool requested = available && runPressedWhileStamina
@@ -354,7 +354,7 @@ internal static class ShipTweaksManager
         Ship? ship = _powerPaddlingHintShip;
         bool show = _showPowerPaddlingHud != null && _showPowerPaddlingHud.Value == BottleShipsPlugin.Toggle.On
                     && player != null && player == _powerPaddlingHintPlayer
-                    && ship != null && IsPowerPaddlingGear(ship)
+                    && ship != null && CanPowerPaddle(ship)
                     && PowerPaddlingEnabled && !player.IsDead() && !player.IsTeleporting()
                     && !player.InCutscene() && root != null && hud.IsVisible()
                     && !Hud.IsUserHidden()
@@ -504,7 +504,7 @@ internal static class ShipTweaksManager
         }
 
         if (sender == 0L
-            || !IsPowerPaddlingGear(ship)
+            || !CanPowerPaddle(ship)
             || !HaveControllingPlayer(ship)
             || !TryFindUniqueAboardPlayer(ship, sender, out Player? player)
             || player == null)
@@ -534,7 +534,7 @@ internal static class ShipTweaksManager
     private static int CountActivePowerPaddlers(Ship ship)
     {
         if (!PowerPaddlingEnabled
-            || !IsPowerPaddlingGear(ship)
+            || !CanPowerPaddle(ship)
             || !HaveControllingPlayer(ship))
         {
             PowerPaddlingRequests.Remove(ship);
@@ -590,13 +590,16 @@ internal static class ShipTweaksManager
                && PowerPaddlingEnabled
                && TryGetLocalPowerPaddlingShip(player, out Ship? ship)
                && ship == _localPowerPaddlingShip
-               && IsPowerPaddlingGear(_localPowerPaddlingShip);
+               && CanPowerPaddle(_localPowerPaddlingShip);
     }
 
-    private static bool IsPowerPaddlingGear(Ship ship)
+    private static bool CanPowerPaddle(Ship ship)
     {
-        return ship.GetSpeedSetting() == Ship.Speed.Back
-               || ship.GetSpeedSetting() == Ship.Speed.Slow;
+        // Keep local input/HUD and owner-side requests/physics on the same rule.
+        // An anchored ship cannot use the force, so it must not spend stamina either.
+        Ship.Speed speed = ship.GetSpeedSetting();
+        return (speed == Ship.Speed.Back || speed == Ship.Speed.Slow)
+               && !PathOfValheimanCompat.IsAnchored(ship);
     }
 
     private static void SetLocalPowerPaddlingRequest(Ship? ship, bool requested)

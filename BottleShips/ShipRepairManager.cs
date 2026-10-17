@@ -136,6 +136,22 @@ internal static class ShipRepairManager
         return true;
     }
 
+    internal static void RestrictMassRepair(Player player, Piece piece, ref bool result)
+    {
+        if (!result || !PathOfValheimanCompat.IsMassRepairActive)
+        {
+            return;
+        }
+
+        // PoV's area repair calls WearNTear.Repair directly, without the field
+        // repair transaction. Leave paid or boiling-blocked ships to a direct repair.
+        if (TryGetFieldRepairQuote(player, piece, out RepairQuote quote)
+            && (quote.WoodCost > 0 || !IsFieldRepairAllowed(quote)))
+        {
+            result = false;
+        }
+    }
+
     internal static void RecordRepairResult(WearNTear wearNTear, bool repaired)
     {
         RepairAttempt? attempt = _activeRepair;
@@ -376,6 +392,7 @@ internal static class ShipRepairManager
             || ZoneSystem.instance == null
             || player.NoCostCheat()
             || ZoneSystem.instance.GetGlobalKey(GlobalKeys.NoWorkbench)
+            || PathOfValheimanCompat.HasFreeShipRepair(player)
             || HasRepairStation(player, piece))
         {
             return false;
@@ -807,6 +824,12 @@ internal static class BottleShipsPlayerCheckCanRemovePiecePatch
             __instance,
             piece,
             ref __result);
+    }
+
+    [HarmonyPriority(Priority.Last)]
+    private static void Postfix(Player __instance, Piece piece, ref bool __result)
+    {
+        ShipRepairManager.RestrictMassRepair(__instance, piece, ref __result);
     }
 }
 

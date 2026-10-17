@@ -119,6 +119,18 @@ Each bottle section can configure:
 
 Synced options are enforced from the server when BottleShips is installed on both server and clients. Client-only options, such as extended cart interaction, remain local.
 
+### Path of Valheiman compatibility
+
+BottleShips includes optional integration for Path of Valheiman 5.0.4. Path of Valheiman is not required or included in the package.
+
+* An active **Mending at Sea** effect uses Path of Valheiman's free ship repair, without BottleShips' Wood cost, cost indicator, or boiling-water restriction for Wood repairs. Refunding or disabling the talent restores the normal BottleShips rules.
+* Path of Valheiman's area repair skips ships that currently require paid BottleShips field repair or are blocked by its boiling-water rule. This also applies to ships with `Build Station = None`. Repairs within station range and existing free-repair exceptions remain available.
+* An anchored ship cannot use Power Paddling. Its hint, stamina consumption, extra force, and paddling FOV effect stop while the anchor is deployed.
+* **Open Shipyard** keeps its own packed-ship items and stored cargo. BottleShips does not also award a bottle during packing. Newly packed ships retain whether construction materials were paid, including the original discount, so redeploying a crate does not make a free-built ship refund materials. Older crates without this information are left unchanged.
+* BottleShips' `Can Be Removed` setting is respected for its four managed ships. Set it to `On` to permit hammer removal and Path of Valheiman packing; the default `Off` prevents both. Path of Valheiman also requires a build station configured on the ship and packing outside that station's range; `Build Station = None` does not activate its crate path.
+
+Sailing bonuses, shipbuilding effects, cargo capacity, cart abilities, and exploration modifiers retain their existing behavior. Vehicle map displays remain separate; `V` can hide BottleShips' temporary pins on the large map.
+
 ### Localization support
 * There should be `BottleShips.English.yml` in plugins folder. Translate it to your language and put it anywhere inside of the Bepinex folder
 ### List of prefabs

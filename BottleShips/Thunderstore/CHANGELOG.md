@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.16
+
+- Added optional Path of Valheiman integration using its active talent effects, without requiring or bundling the mod.
+- Let active Mending at Sea use Path of Valheiman's free repair without a Wood charge or Wood-repair HUD. Its area repairs skip ships requiring paid field repair or blocked by BottleShips' boiling-water rule, including Build Station=None ships.
+- Disabled Power Paddling input, stamina consumption, hint, FOV bonus, and owner-side extra force while Path of Valheiman's anchor is deployed.
+- Preserved the original free-construction flag and paid-material factor through newly packed Path of Valheiman ship crates, retaining resource-refund protection after redeployment. Existing crates without this metadata remain unchanged.
+- Respected Can Be Removed for BottleShips-managed ships after Path of Valheiman initialization; set it to On to enable its ship-packing path. Sailing, exploration, cargo, and cart bonuses retain their existing behavior.
+
 ## 1.1.15
 
 - Added a short Power Paddling HUD hint for eligible helmsmen and seated passengers at Back or Slow, with English and Korean text and the player's current Run key or gamepad button.
