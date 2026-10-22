@@ -36,6 +36,11 @@ internal static partial class PlayerVehicleMap
         KeyboardShortcut shortcut = ToggleMyVehiclePinsKey.Value;
         if (IsKeyDown(shortcut) && CanProcessMapShortcutInput())
         {
+            if (!PathOfValheimanCompat.ValidateVehicleMapIntegration())
+            {
+                CloseMap();
+                return;
+            }
             _visible = !_visible;
             RenderPins();
         }
@@ -52,13 +57,16 @@ internal static partial class PlayerVehicleMap
 
     private static void ObserveMap(Minimap? map)
     {
-        if (!IsLargeMap(map) || Player.m_localPlayer == null || ZNet.instance == null)
+        if (!IsLargeMap(map) || Player.m_localPlayer == null || ZNet.instance == null ||
+            !PathOfValheimanCompat.CanUseVehicleMap(Player.m_localPlayer))
         {
             CloseMap();
             return;
         }
         if (_map == map && _mapPlayer == Player.m_localPlayer && _mapNetwork == ZNet.instance) return;
         CloseMap();
+        // Check the optional integration at request boundaries, not every UI frame.
+        if (!PathOfValheimanCompat.ValidateVehicleMapIntegration()) return;
         _map = map;
         _mapPlayer = Player.m_localPlayer;
         _mapNetwork = ZNet.instance;
@@ -75,6 +83,13 @@ internal static partial class PlayerVehicleMap
         if (!_pending || requestId != _requestId || !IsLargeMap(_map) ||
             _map != Minimap.instance || _mapPlayer == null || _mapPlayer != Player.m_localPlayer ||
             _mapNetwork == null || _mapNetwork != ZNet.instance) return;
+        // A node refund or server talent change can precede the next UI tick.
+        if (!PathOfValheimanCompat.CanUseVehicleMap(_mapPlayer) ||
+            !PathOfValheimanCompat.ValidateVehicleMapIntegration())
+        {
+            CloseMap();
+            return;
+        }
         _pending = false;
         _snapshot = entries;
         RenderPins();

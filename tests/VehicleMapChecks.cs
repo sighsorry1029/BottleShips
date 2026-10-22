@@ -183,6 +183,19 @@ namespace BottleShipsVehicleMapChecks
         public T? GetComponent<T>() where T : class => new PlayerController() as T;
         public void Message(MessageHud.MessageType type, string text) => Messages.Add(text);
     }
+    public static class PathOfValheimanCompat
+    {
+        public static bool Loaded, HarborMark, Ready = true, ContractValid = true;
+        public static int Validations;
+        public static bool CanUseVehicleMap(Player? player) => !Loaded ||
+            (Ready && HarborMark && player != null && player == Player.m_localPlayer);
+        public static bool ValidateVehicleMapIntegration()
+        {
+            Validations++;
+            if (Loaded && !ContractValid) Ready = false;
+            return !Loaded || Ready;
+        }
+    }
     public static class MessageHud { public enum MessageType { Center } }
     public class Minimap
     {
@@ -273,6 +286,9 @@ namespace BottleShipsVehicleMapChecks
             ZNet.instance = new ZNet(); ZDOMan.instance = new ZDOMan();
             ZNetScene.instance = new ZNetScene(); Game.instance = new Game();
             Player.m_localPlayer = new Player(); Minimap.instance = new Minimap();
+            PathOfValheimanCompat.Loaded = PathOfValheimanCompat.HarborMark = false;
+            PathOfValheimanCompat.Ready = PathOfValheimanCompat.ContractValid = true;
+            PathOfValheimanCompat.Validations = 0;
             Time.realtimeSinceStartup = 10; PlayerController.InputAllowed = true;
             ToggleMyVehiclePinsKey.Value = new KeyboardShortcut(KeyCode.V);
             foreach (string name in new[] { "Raft", "Cart", "House" })
@@ -369,6 +385,61 @@ namespace BottleShipsVehicleMapChecks
             Check(Pins.Count == 1 && ZDOMan.instance.Scans == scans, "First show does not request again");
             Close(); Minimap.instance.m_mode = Minimap.MapMode.None; ObserveMap(Minimap.instance);
             Check(_map == null && ZDOMan.instance.Scans == scans, "No-map world does not scan");
+
+            Reset(); PathOfValheimanCompat.Loaded = true;
+            Add(1, "Raft", 42); Add(2, "Cart", 42); Open(); Tick();
+            Check(_map == null && _hint == null && ZDOMan.instance.Scans == 0,
+                "PoV without Harbor Mark does not scan or show vehicle controls");
+            PathOfValheimanCompat.HarborMark = true; Tick(); Game.instance.Drain(); Tick();
+            Check(Pins.Count == 2 && _hint != null, "Harbor Mark unlocks boats and carts while the map stays open");
+            int validations = PathOfValheimanCompat.Validations;
+            for (int frame = 0; frame < 10; frame++) Tick();
+            Check(PathOfValheimanCompat.Validations == validations,
+                "Idle UI does not repeatedly inspect Harmony contracts");
+            var unlockedHint = _hint!; PathOfValheimanCompat.HarborMark = false; Tick();
+            Check(_map == null && Pins.Count == 0 && _snapshot.Count == 0 && unlockedHint.Destroyed,
+                "Refund or disabled talent removes vehicle pins, cached positions and key hint");
+            long revokedId = _requestId;
+            PathOfValheimanCompat.HarborMark = true; Tick();
+            Check(_pending && _visible && _requestId > revokedId,
+                "Unlocking again starts a fresh visible snapshot");
+            PathOfValheimanCompat.HarborMark = false; Tick();
+            Check(Game.instance.Routines.Count == 0 && !_pending && _map == null,
+                "Revoking while scanning cancels the local coroutine");
+            PathOfValheimanCompat.HarborMark = true; Tick();
+            PathOfValheimanCompat.HarborMark = false; Game.instance.Drain();
+            Check(_map == null && Pins.Count == 0 && !_pending,
+                "Completed local scan cannot publish after refund before the next UI tick");
+
+            Reset(); PathOfValheimanCompat.Loaded = PathOfValheimanCompat.HarborMark = true;
+            PathOfValheimanCompat.ContractValid = false; Open(); Tick();
+            Check(_map == null && ZDOMan.instance.Scans == 0 && PathOfValheimanCompat.Validations == 1,
+                "Invalid integration contract stops the request without repeated attempts");
+            Reset(); PathOfValheimanCompat.Loaded = PathOfValheimanCompat.HarborMark = true;
+            Add(1, "Raft", 42); Open(); PathOfValheimanCompat.ContractValid = false; Game.instance.Drain();
+            Check(_map == null && Pins.Count == 0, "Lost suppression patch rejects an in-flight snapshot");
+            Reset(); PathOfValheimanCompat.Loaded = PathOfValheimanCompat.HarborMark = true;
+            Add(1, "Raft", 42); Open(); Game.instance.Drain(); Tick();
+            PathOfValheimanCompat.ContractValid = false; Keys.Down = true; Tick();
+            Check(_map == null && Pins.Count == 0 && _hint == null,
+                "Toggling cached pins rechecks a changed suppression contract");
+
+            Reset(); PathOfValheimanCompat.Loaded = PathOfValheimanCompat.HarborMark = true;
+            ZNet.instance.Server = false; var unlockServer = new ZRpc(); ZNet.instance.ServerRpc = unlockServer;
+            Open(); long unlockedRequest = _requestId; PathOfValheimanCompat.HarborMark = false;
+            OnSnapshot(unlockServer, Packet(unlockedRequest, 0, 1,
+                new VehicleEntry(new ZDOID(10, 1), "Raft".GetStableHashCode(), new Vector3(1, 0, 1))));
+            Check(_map == null && Pins.Count == 0 && !_pending,
+                "Remote response after node loss is discarded before a UI tick");
+            PathOfValheimanCompat.HarborMark = true; Tick();
+            OnSnapshot(unlockServer, Packet(unlockedRequest, 0, 0));
+            Check(_pending && _requestId > unlockedRequest, "Re-unlocked request cannot accept the prior response");
+
+            Reset(); PathOfValheimanCompat.Loaded = true; Player.m_localPlayer = null;
+            Add(1, "Raft", 42); var unlockedPeer = AddPeer(42); OnRequest(unlockedPeer.m_rpc, Request(1));
+            Game.instance.Drain();
+            Check(unlockedPeer.m_rpc.Sent.Count == 1,
+                "Dedicated server serves authenticated peers independently of local-player node state");
 
             Reset(); own = Add(1, "Raft", 42);
             Check(TryGetOwnVehicle(ZDOMan.instance, own, 42, own.Prefab, out _), "Recorded creator accepted");

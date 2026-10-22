@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.17
+
+- Made Path of Valheiman's active Harbor Mark effect unlock BottleShips' boat and cart map display through its public stats API. Without Path of Valheiman, the display remains available without a talent.
+- Replaced Path of Valheiman's ship markers with BottleShips' large-map vehicle icons while this integration is active. Positions refresh when the map opens; there are no minimap pins or periodic position updates. Other Path of Valheiman map markers retain their behavior.
+- Removed vehicle pins, key hints, and cached positions when Harbor Mark is refunded or disabled. Local scans stop, late responses are ignored, and unlocking the effect again requests fresh positions.
+- Kept Path of Valheiman's own ship display when the map API or patch checks fail, disabling only BottleShips' replacement display.
+- Moved the vehicle-map shortcut after the action text in English and Korean key hints, matching the game's map hint order.
+
 ## 1.1.16
 
 - Added optional Path of Valheiman integration using its active talent effects, without requiring or bundling the mod.

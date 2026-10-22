@@ -47,6 +47,54 @@ try {
     $stat = $povTypes | Where-Object FullName -eq 'PassiveTree.Stat'
     Require ($stat.IsEnum -and @($stat.Fields | Where-Object Name -eq ShipRepairAnywhere).Count -eq 1) 'ShipRepairAnywhere enum member missing'
 
+    # Public API is used only for the active local-player effect. Its implementation
+    # does not own or suppress PoV rendering; the isolated Scan branch below does.
+    foreach ($api in @(
+        (Method 'Valheiman.Api.Pov' 'AtLeast' 'System.Boolean' @('System.Int32','System.Int32')),
+        (Method 'Valheiman.Api.Pov' 'Has' 'System.Boolean' @('System.String')),
+        (Method 'Valheiman.Api.Stats' 'Has' 'System.Boolean' @('System.String')))) {
+        Require ($api.IsPublic -and $api.DeclaringType.IsPublic) "Non-public PoV API: $api"
+    }
+    $scan = Method 'PassiveTree.MapSight' 'Scan' 'System.Void' @('Minimap','Player','PassiveTree.StatSet')
+    $null = Method 'PassiveTree.MapSight' 'AskFar' 'System.Void' @('Player')
+    $null = Method 'PassiveTree.MapSight' 'ShipIcon' 'UnityEngine.Sprite' @()
+    $null = Method 'PassiveTree.MapSight' 'Show' 'System.Void' @('Minimap','PassiveTree.MapSight/Kind','UnityEngine.Vector3','UnityEngine.Sprite','System.Boolean','System.String','System.String')
+    $harbor = @($stat.Fields | Where-Object Name -eq HarborMark)
+    Require ($harbor.Count -eq 1) 'HarborMark enum member missing'
+    $instructions = $scan.Body.Instructions
+    function LoadsInt($instruction, $value) {
+        if ($instruction.OpCode.Name -in @('ldc.i4','ldc.i4.s')) { return [int]$instruction.Operand -eq $value }
+        if ($instruction.OpCode.Name -match '^ldc\.i4\.([0-8])$') { return [int]$Matches[1] -eq $value }
+        return $instruction.OpCode.Name -eq 'ldc.i4.m1' -and $value -eq -1
+    }
+    $predicates = @(for ($i = 1; $i + 2 -lt $instructions.Count; $i++) {
+        if ((LoadsInt $instructions[$i] ([int]$harbor[0].Constant)) -and
+            [string]$instructions[$i + 1].Operand -eq [string]$has[0]) { $i }
+    })
+    Require ($predicates.Count -eq 1) 'HarborMark must have one isolated scan predicate'
+    $predicate = $predicates[0]
+    Require ($instructions[$predicate - 1].OpCode.Name -eq 'ldarg.2' -and
+        $instructions[$predicate + 2].OpCode.Name -in @('brfalse','brfalse.s')) 'HarborMark condition flow changed'
+    $start = $predicate + 3
+    $end = $instructions.IndexOf($instructions[$predicate + 2].Operand)
+    Require ($end -gt $start -and $instructions[$end].OpCode.Name -eq 'ldarg.2' -and
+        [string]$instructions[$end + 2].Operand -eq [string]$has[0]) 'HarborMark branch is no longer separate from other map features'
+    $branch = @($instructions | Select-Object -Skip $start -First ($end - $start))
+    $branchCalls = @($branch | Where-Object { $_.OpCode.Name -in @('call','callvirt') })
+    Require (($branchCalls.Operand.Name -join ',') -eq 'AskFar,GetEnumerator,get_Current,ShipIcon,Concat,Show,MoveNext,Dispose') 'HarborMark helper calls changed'
+    Require (@($branch | Where-Object { $_.OpCode.Name -in @('stfld','stsfld','newobj') }).Count -eq 0) 'HarborMark branch now mutates another state'
+    $kind = $povTypes | Where-Object FullName -eq 'PassiveTree.MapSight/Kind'
+    $shipKind = $kind.Fields | Where-Object Name -eq Ship
+    $show = @($branch | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq 'PassiveTree.MapSight' -and $_.Operand.Name -eq 'Show' })
+    Require ($show.Count -eq 1) 'HarborMark must draw exactly one kind of mark'
+    $showIndex = [Array]::IndexOf($branch, $show[0])
+    Require ($showIndex -ge 11 -and (LoadsInt $branch[$showIndex - 10] ([int]$shipKind.Constant)) -and
+        $branch[$showIndex - 5].Operand -eq 's:') 'HarborMark no longer draws only ship marks'
+    $tail = @($instructions | Select-Object -Skip ($end + 1))
+    Require (@($tail | Where-Object { [string]$_.Operand -like '*MapSight::seenNow' }).Count -ge 1) 'PoV stale mark detection missing'
+    Require (@($tail | Where-Object { [string]$_.Operand -like '*Minimap::DestroyPinMarker*' }).Count -eq 1) 'PoV stale pin cleanup changed'
+    Require (@($tail | Where-Object { [string]$_.Operand -like '*MapSight/Mark*::Remove*' }).Count -eq 1) 'PoV stale mark removal changed'
+
     # Match the exact source IL operations used by the production packing transpiler.
     $calls = @{}
     $patterns = @{
@@ -87,7 +135,7 @@ try {
             }
         }
     }
-    Write-Output "PoV contracts and packing IL verified; $accesses direct game references checked against original metadata."
+    Write-Output "PoV public API, isolated HarborMark branch/cleanup and packing IL verified; $accesses direct game references checked against original metadata."
     Write-Output "PoV SHA-256: $((Get-FileHash -LiteralPath $PathOfValheimanDll -Algorithm SHA256).Hash)"
 } finally {
     $pov.Dispose()

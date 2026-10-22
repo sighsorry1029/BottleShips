@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Reflection.Emit;
 using BepInEx.Bootstrap;
 using HarmonyLib;
+using UnityEngine;
 
 namespace BottleShips;
 
@@ -20,6 +21,13 @@ internal static class PathOfValheimanCompat
     private static readonly HashSet<string> Warnings = new();
     private static readonly List<(MethodInfo Original, MethodInfo Patch)> InstalledPatches = new();
     private static Func<bool>? _hasFreeShipRepair;
+    private static Func<string, bool>? _hasStat;
+    private static MethodInfo? _mapScan;
+    private static MethodInfo? _mapStatHas;
+    private static bool _harborMapReady;
+    private static bool _harborBranchVerified;
+    private static int _harborStat;
+    private static int _shipMarkKind;
     private static Func<ItemDrop.ItemData?>? _placingCrate;
     private static Harmony? _harmony;
     [ThreadStatic] private static int _massRepairDepth;
@@ -35,6 +43,7 @@ internal static class PathOfValheimanCompat
 
         IsLoaded = true;
         Assembly assembly = plugin.Instance.GetType().Assembly;
+        InitializeVehicleMap(assembly);
         try
         {
             _hasFreeShipRepair = CreateFreeRepairReader(assembly);
@@ -85,6 +94,9 @@ internal static class PathOfValheimanCompat
 
     internal static void Shutdown()
     {
+        // Restore the original PoV condition even if patch removal fails partway through.
+        _harborMapReady = false;
+        _harborBranchVerified = false;
         if (_harmony != null)
         {
             for (int i = InstalledPatches.Count - 1; i >= 0; --i)
@@ -93,11 +105,228 @@ internal static class PathOfValheimanCompat
         InstalledPatches.Clear();
         _harmony = null;
         _hasFreeShipRepair = null;
+        _hasStat = null;
+        _mapScan = null;
+        _mapStatHas = null;
         _placingCrate = null;
         _massRepairDepth = 0;
         IsLoaded = false;
         Warnings.Clear();
     }
+
+    private static void InitializeVehicleMap(Assembly assembly)
+    {
+        try
+        {
+            MethodInfo atLeast = RequirePublicApi(assembly, "Valheiman.Api.Pov", "AtLeast", typeof(int), typeof(int));
+            MethodInfo feature = RequirePublicApi(assembly, "Valheiman.Api.Pov", "Has", typeof(string));
+            if (!((Func<int, int, bool>)Delegate.CreateDelegate(typeof(Func<int, int, bool>), atLeast))(1, 0) ||
+                !((Func<string, bool>)Delegate.CreateDelegate(typeof(Func<string, bool>), feature))("stats"))
+                throw new MissingMemberException("PathOfValheiman public stats API is unavailable.");
+            _hasStat = (Func<string, bool>)Delegate.CreateDelegate(typeof(Func<string, bool>),
+                RequirePublicApi(assembly, "Valheiman.Api.Stats", "Has", typeof(string)));
+            Type stat = assembly.GetType("PassiveTree.Stat", throwOnError: true)!;
+            Type stats = assembly.GetType("PassiveTree.StatSet", throwOnError: true)!;
+            Type kind = assembly.GetType("PassiveTree.MapSight+Kind", throwOnError: true)!;
+            if (!stat.IsEnum || !kind.IsEnum) throw new MissingMemberException("PoV map enum contract changed.");
+            _harborStat = Convert.ToInt32(Enum.Parse(stat, "HarborMark"), CultureInfo.InvariantCulture);
+            _shipMarkKind = Convert.ToInt32(Enum.Parse(kind, "Ship"), CultureInfo.InvariantCulture);
+            _mapStatHas = stats.GetMethod("Has", BindingFlags.Public | BindingFlags.Instance, null, new[] { stat }, null);
+            if (_mapStatHas?.ReturnType != typeof(bool)) throw new MissingMethodException("StatSet.Has(Stat)");
+            _mapScan = RequireMethod(assembly, "PassiveTree.MapSight", "Scan", typeof(void), typeof(Minimap), typeof(Player), stats);
+            RequireMethod(assembly, "PassiveTree.MapSight", "AskFar", typeof(void), typeof(Player));
+            RequireMethod(assembly, "PassiveTree.MapSight", "ShipIcon", typeof(Sprite));
+            RequireMethod(assembly, "PassiveTree.MapSight", "Show", typeof(void), typeof(Minimap), kind,
+                typeof(Vector3), typeof(Sprite), typeof(bool), typeof(string), typeof(string));
+            Install(_mapScan, nameof(SuppressHarborBranch), transpiler: true);
+            // The transpiler must have completed before either implementation changes ownership.
+            if (!_harborBranchVerified || !HasExclusiveMapPatch())
+                throw new InvalidOperationException("PoV map suppression did not install as a complete, exclusive patch.");
+            _harborMapReady = true;
+        }
+        catch (Exception error)
+        {
+            _harborMapReady = false;
+            _hasStat = null;
+            try
+            {
+                RemovePatches(nameof(SuppressHarborBranch));
+            }
+            catch (Exception rollbackError)
+            {
+                // The inert filter remains tracked for shutdown; map failure must
+                // not prevent the independent repair and crate integrations loading.
+                WarnOnce("harbor-rollback", "An inactive map patch could not be removed during initialization.", rollbackError);
+            }
+            WarnOnce("harbor-map", "Vehicle map integration is unavailable; BottleShips vehicle pins are disabled and PathOfValheiman map behavior is retained.", error);
+        }
+    }
+
+    private static MethodInfo RequirePublicApi(Assembly assembly, string typeName, string name, params Type[] parameters)
+    {
+        MethodInfo method = RequireMethod(assembly, typeName, name, typeof(bool), parameters);
+        if (!method.IsPublic || method.DeclaringType?.IsPublic != true)
+            throw new MissingMethodException(typeName, name);
+        return method;
+    }
+
+    internal static bool CanUseVehicleMap(Player? player)
+    {
+        if (!IsLoaded) return true;
+        if (!_harborMapReady || _hasStat == null || player == null || player != Player.m_localPlayer) return false;
+        try
+        {
+            // Read the current effect, not a node id or cached selection. Server talent
+            // switches can recompute stats without raising the public StatsChanged event.
+            return _hasStat("HarborMark");
+        }
+        catch (Exception error)
+        {
+            DisableVehicleMap(error);
+            return false;
+        }
+    }
+
+    internal static bool ValidateVehicleMapIntegration()
+    {
+        if (!IsLoaded) return true;
+        if (!_harborMapReady) return false;
+        try
+        {
+            if (HasExclusiveMapPatch()) return true;
+            DisableVehicleMap(new InvalidOperationException("The active PoV map patch contract changed."));
+        }
+        catch (Exception error)
+        {
+            DisableVehicleMap(error);
+        }
+        return false;
+    }
+
+    private static bool HasExclusiveMapPatch()
+    {
+        if (_mapScan == null || !_harborBranchVerified) return false;
+        Patches? patches = Harmony.GetPatchInfo(_mapScan);
+        return patches != null && patches.Prefixes.Count == 0 && patches.Postfixes.Count == 0 &&
+               patches.Finalizers.Count == 0 && patches.ILManipulators.Count == 0 && patches.Transpilers.Count == 1 &&
+               patches.Transpilers[0].owner == _harmony?.Id &&
+               patches.Transpilers[0].PatchMethod == AccessTools.DeclaredMethod(typeof(PathOfValheimanCompat), nameof(SuppressHarborBranch));
+    }
+
+    private static void DisableVehicleMap(Exception error)
+    {
+        // Do not unpatch while PoV may be inside this method. The injected condition
+        // immediately becomes transparent, and our normal shutdown removes the patch.
+        _harborMapReady = false;
+        _hasStat = null;
+        WarnOnce("harbor-map", "Vehicle map integration stopped; BottleShips vehicle pins are disabled and PathOfValheiman map behavior is retained.", error);
+    }
+
+    private static bool KeepPovHarborMark(bool original) => original && !_harborMapReady;
+
+    private static IEnumerable<CodeInstruction> SuppressHarborBranch(IEnumerable<CodeInstruction> instructions)
+    {
+        // Harmony also re-evaluates transpilers for inspection. A successful
+        // reevaluation retains the handoff; failure leaves the original path enabled.
+        bool wasReady = _harborMapReady;
+        _harborMapReady = false;
+        _harborBranchVerified = false;
+        var code = new List<CodeInstruction>(instructions);
+        int predicate = -1;
+        for (int i = 1; i + 2 < code.Count; ++i)
+        {
+            if (!LoadsInt(code[i], _harborStat) || !code[i + 1].Calls(_mapStatHas!)) continue;
+            if (predicate >= 0) throw new InvalidOperationException("PoV HarborMark has multiple scan predicates.");
+            predicate = i;
+        }
+        if (predicate < 1 || code[predicate - 1].opcode != OpCodes.Ldarg_2 ||
+            (code[predicate + 2].opcode != OpCodes.Brfalse && code[predicate + 2].opcode != OpCodes.Brfalse_S) ||
+            code[predicate + 2].operand is not Label endLabel || code[predicate + 2].blocks.Count != 0)
+            throw new InvalidOperationException("PoV HarborMark scan predicate changed.");
+        int start = predicate + 3;
+        int end = code.FindIndex(start, instruction => instruction.labels.Contains(endLabel));
+        if (end <= start || code[end].opcode != OpCodes.Ldarg_2 || end + 2 >= code.Count ||
+            !code[end + 2].Calls(_mapStatHas!) || code[start].opcode != OpCodes.Ldarg_1 ||
+            !IsMapCall(code[start + 1], "AskFar"))
+            throw new InvalidOperationException("PoV HarborMark is no longer an isolated map branch.");
+        List<CodeInstruction> branch = code.GetRange(start, end - start);
+        // This branch may only query distant ships, enumerate the reply and draw
+        // their marks. Additional effect/helper calls require a new review.
+        string[] expectedCalls = { "AskFar", "GetEnumerator", "get_Current", "ShipIcon", "Concat", "Show", "MoveNext", "Dispose" };
+        MethodInfo?[] calls = branch.Where(instruction => instruction.opcode == OpCodes.Call || instruction.opcode == OpCodes.Callvirt)
+            .Select(instruction => instruction.operand as MethodInfo).ToArray();
+        if (calls.Length != expectedCalls.Length || calls.Where((method, index) =>
+                method == null || method.Name != expectedCalls[index] || !IsHarborCall(method)).Any())
+            throw new InvalidOperationException("PoV HarborMark scan calls changed.");
+        int show = branch.FindIndex(instruction => IsMapCall(instruction, "Show"));
+        if (branch.Count(instruction => IsMapCall(instruction, "Show")) != 1 || show < 11 ||
+            branch[show - 11].opcode != OpCodes.Ldarg_0 || !LoadsInt(branch[show - 10], _shipMarkKind) ||
+            !IsMapField(branch[show - 8], "PassiveTree.MapSight+Far", "Pos") ||
+            !IsMapCall(branch[show - 7], "ShipIcon") || !LoadsInt(branch[show - 6], 0) ||
+            branch[show - 5].opcode != OpCodes.Ldstr || (string?)branch[show - 5].operand != "s:" ||
+            !IsMapField(branch[show - 3], "PassiveTree.MapSight+Far", "Id") || branch[show - 1].opcode != OpCodes.Ldnull ||
+            branch.Count(instruction => IsMapCall(instruction, "AskFar")) != 1 ||
+            branch.Count(instruction => IsMapCall(instruction, "ShipIcon")) != 1 ||
+            !branch.Any(instruction => IsMapField(instruction, "PassiveTree.MapSight+Far", "Ship")) ||
+            branch.Any(instruction => instruction.Calls(_mapStatHas!) || instruction.opcode == OpCodes.Stfld ||
+                instruction.opcode == OpCodes.Stsfld || instruction.opcode == OpCodes.Newobj))
+            throw new InvalidOperationException("PoV HarborMark ship-only scan contract changed.");
+        // Keep the shared stale-mark removal path: skipping this branch must make old
+        // ship pins unseen, so PoV removes them on its next normal scan (about one second).
+        bool clearsSeen = false, checksSeen = false, removesPin = false, removesMark = false;
+        for (int i = 0; i + 1 < code.Count; ++i)
+        {
+            if (i < start && IsMapField(code[i], "PassiveTree.MapSight", "seenNow") &&
+                code[i + 1].operand is MethodInfo clear && clear.Name == "Clear") clearsSeen = true;
+            if (i <= end) continue;
+            if (IsMapField(code[i], "PassiveTree.MapSight", "seenNow")) checksSeen = true;
+            if (code[i].operand is MethodInfo method)
+            {
+                if (method.DeclaringType == typeof(Minimap) && method.Name == "DestroyPinMarker") removesPin = true;
+                if (method.Name == "Remove" && method.DeclaringType?.IsGenericType == true &&
+                    method.DeclaringType.GetGenericArguments().Last().FullName == "PassiveTree.MapSight+Mark") removesMark = true;
+            }
+        }
+        if (!clearsSeen || !checksSeen || !removesPin || !removesMark)
+            throw new InvalidOperationException("PoV map stale-pin cleanup contract changed.");
+        var filter = new CodeInstruction(OpCodes.Call,
+            AccessTools.DeclaredMethod(typeof(PathOfValheimanCompat), nameof(KeepPovHarborMark)));
+        filter.labels.AddRange(code[predicate + 2].labels);
+        code[predicate + 2].labels.Clear();
+        code.Insert(predicate + 2, filter);
+        _harborBranchVerified = true;
+        _harborMapReady = wasReady;
+        return code;
+    }
+
+    private static bool IsMapCall(CodeInstruction instruction, string name) =>
+        instruction.operand is MethodInfo method && method.DeclaringType == _mapScan?.DeclaringType &&
+        method.Name == name && (instruction.opcode == OpCodes.Call || instruction.opcode == OpCodes.Callvirt);
+
+    private static bool IsHarborCall(MethodInfo method)
+    {
+        if (method.DeclaringType == _mapScan?.DeclaringType)
+            return method.Name is "AskFar" or "ShipIcon" or "Show";
+        if (method.DeclaringType == typeof(string))
+            return method == typeof(string).GetMethod(nameof(string.Concat), new[] { typeof(string), typeof(string) });
+        if (method.DeclaringType == typeof(IDisposable)) return method.Name == nameof(IDisposable.Dispose);
+        Type? type = method.DeclaringType;
+        return type?.IsGenericType == true &&
+               (type.GetGenericTypeDefinition() == typeof(List<>) || type.GetGenericTypeDefinition() == typeof(List<>.Enumerator)) &&
+               type.GetGenericArguments().Single().FullName == "PassiveTree.MapSight+Far" &&
+               method.Name is "GetEnumerator" or "get_Current" or "MoveNext";
+    }
+
+    private static bool IsMapField(CodeInstruction instruction, string type, string name) =>
+        instruction.operand is FieldInfo field && field.DeclaringType?.FullName == type && field.Name == name &&
+        (instruction.opcode == OpCodes.Ldfld || instruction.opcode == OpCodes.Ldsfld);
+
+    private static bool LoadsInt(CodeInstruction instruction, int value) =>
+        instruction.opcode == OpCodes.Ldc_I4 ? (int)instruction.operand == value :
+        instruction.opcode == OpCodes.Ldc_I4_S ? Convert.ToInt32(instruction.operand, CultureInfo.InvariantCulture) == value :
+        instruction.opcode == OpCodes.Ldc_I4_M1 ? value == -1 :
+        instruction.opcode.Value >= OpCodes.Ldc_I4_0.Value && instruction.opcode.Value <= OpCodes.Ldc_I4_8.Value &&
+        instruction.opcode.Value - OpCodes.Ldc_I4_0.Value == value;
 
     internal static bool HasFreeShipRepair(Player player)
     {
