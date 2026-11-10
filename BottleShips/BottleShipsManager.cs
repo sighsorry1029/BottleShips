@@ -46,17 +46,17 @@ internal static class BottleShipsManager
 
     private static readonly BottleTarget[] Targets =
     {
-        new("Raft", "Raft", "Raft_bottle", "piece_workbench", false, 45f, 2, true, "piece_workbench", 1, "Wood:20, LeatherScraps:6, Resin:6"),
-        new("Karve", "Karve", "Karve_bottle", "piece_workbench", false, 116f, 1, true, "forge", 1, "FineWood:30, DeerHide:10, Resin:20, BronzeNails:80"),
-        new("Longship", "VikingShip", "VikingShip_bottle", "piece_workbench", false, 220f, 1, true, "forge", 1, "IronNails:100, DeerHide:10, FineWood:40, ElderBark:40"),
-        new("Drakkar", "VikingShip_Ashlands", "VikingShip_Ashlands_bottle", "piece_workbench", false, 260f, 1, true, "piece_artisanstation", 2, "IronNails:100, CeramicPlate:30, FineWood:50, YggdrasilWood:25"),
-        new("Cart", "Cart", "Cart_bottle", "None", false, 45f, 1, true, "forge", 1, "Wood:20, BronzeNails:10"),
-        new("Battering Ram", "BatteringRam", "BatteringRam_bottle", "None", false, 170f, 1, false, "piece_artisanstation", 2, "Wood:10, Blackwood:20, FlametalNew:10, SurtlingCore:2"),
-        new("Catapult", "Catapult", "Catapult_bottle", "None", false, 165f, 1, false, "piece_artisanstation", 2, "Blackwood:20, FlametalNew:10, CharredCogwheel:1"),
-        new("Wood Portal", "portal_wood", "portal_wood_bottle", "None", true, 52f, 2, true, "piece_workbench", 1, "GreydwarfEye:10, FineWood:20, SurtlingCore:2"),
-        new("Stone Portal", "portal_stone", "portal_stone_bottle", "None", true, 119f, 1, false, "piece_artisanstation", 2, "GreydwarfEye:10, Grausten:30, MoltenCore:2, Iron:2"),
-        new("Troll Trap", "piece_trap_troll", "piece_trap_troll_bottle", "None", true, 70f, 6, false, "piece_artisanstation", 1, "BlackMetal:5, BronzeNails:10, MechanicalSpring:1"),
-        new("Ballista", "piece_turret", "piece_turret_bottle", "None", true, 155f, 3, false, "piece_artisanstation", 1, "BlackMetal:10, YggdrasilWood:10, MechanicalSpring:3"),
+        new("Raft", "Raft", "Raft_bottle", "piece_workbench", true, 45f, 2, true, "None", 1, "Wood:20, LeatherScraps:6, Resin:6"),
+        new("Karve", "Karve", "Karve_bottle", "piece_workbench", true, 116f, 1, true, "None", 1, "FineWood:30, DeerHide:10, Resin:20, BronzeNails:80"),
+        new("Longship", "VikingShip", "VikingShip_bottle", "piece_workbench", true, 220f, 1, true, "None", 1, "IronNails:100, DeerHide:10, FineWood:40, ElderBark:40"),
+        new("Drakkar", "VikingShip_Ashlands", "VikingShip_Ashlands_bottle", "piece_workbench", true, 260f, 1, true, "None", 1, "IronNails:100, CeramicPlate:30, FineWood:50, YggdrasilWood:25"),
+        new("Cart", "Cart", "Cart_bottle", "None", true, 45f, 1, true, "None", 1, "Wood:20, BronzeNails:10"),
+        new("Battering Ram", "BatteringRam", "BatteringRam_bottle", "None", true, 170f, 1, false, "None", 1, "Wood:10, Blackwood:20, FlametalNew:10, SurtlingCore:2"),
+        new("Catapult", "Catapult", "Catapult_bottle", "None", true, 165f, 1, false, "None", 1, "Blackwood:20, FlametalNew:10, CharredCogwheel:1"),
+        new("Wood Portal", "portal_wood", "portal_wood_bottle", "None", true, 52f, 2, true, "None", 1, "GreydwarfEye:10, FineWood:20, SurtlingCore:2"),
+        new("Stone Portal", "portal_stone", "portal_stone_bottle", "None", true, 119f, 1, false, "None", 1, "GreydwarfEye:10, Grausten:30, MoltenCore:2, Iron:2"),
+        new("Troll Trap", "piece_trap_troll", "piece_trap_troll_bottle", "None", true, 70f, 6, false, "None", 1, "BlackMetal:5, BronzeNails:10, MechanicalSpring:1"),
+        new("Ballista", "piece_turret", "piece_turret_bottle", "None", true, 155f, 3, false, "None", 1, "BlackMetal:10, YggdrasilWood:10, MechanicalSpring:3"),
     };
 
     private static readonly Dictionary<string, PieceBaseline> PieceBaselines = new(StringComparer.OrdinalIgnoreCase);

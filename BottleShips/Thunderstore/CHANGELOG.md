@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.18
+
+- Fixed Harbor Mark map integration with Path of Valheiman 6.0.7's live-ship scan and remote-ship deduplication. The active effect still unlocks BottleShips' boat and cart display, replacing only Path of Valheiman's ship markers.
+- Extended the compatibility checks for the new ship scan while retaining the earlier supported scan. Unsupported changes disable only BottleShips' replacement display and preserve Path of Valheiman's own map behavior.
+- Changed all eleven bottle sections to default to `Recipe Station = None, 1` for hand crafting and `Can Be Removed = On`. Existing saved settings and separate `Build Station` requirements are preserved.
+- Updated the BepInExPack dependency to `5.4.2360`.
+
 ## 1.1.17
 
 - Made Path of Valheiman's active Harbor Mark effect unlock BottleShips' boat and cart map display through its public stats API. Without Path of Valheiman, the display remains available without a talent.

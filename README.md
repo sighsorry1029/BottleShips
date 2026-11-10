@@ -117,21 +117,24 @@ Each bottle section can configure:
 * `Recipe Station`
 * `Recipe Resources`
 
+All eleven bottle sections default to `Recipe Station = None, 1` (hand crafting) and `Can Be Removed = On`. Existing saved settings are preserved; these defaults apply to new entries or when resetting an entry to its default. `Build Station` is a separate requirement for placing the piece.
+
 Synced options are enforced from the server when BottleShips is installed on both server and clients. Client-only options, such as extended cart interaction, remain local.
 
 ### Path of Valheiman compatibility
 
-BottleShips includes optional integration for Path of Valheiman. The integration has been statically checked against 5.1.2; this is not an in-game multiplayer validation. Path of Valheiman is not required or included in the package.
+BottleShips includes optional integration for Path of Valheiman. The integration has been statically checked against 5.1.2 and 6.0.7; this is not an in-game multiplayer validation. Path of Valheiman is not required or included in the package.
 
 * **Harbor Mark** unlocks BottleShips' boat and cart display. While this integration is active, BottleShips replaces Path of Valheiman's ship pins with its own large-map-only display: positions refresh when the map is opened, and there are no minimap pins or periodic position updates. Other Path of Valheiman map markers are unchanged.
 * Refunding Harbor Mark or disabling its effect removes BottleShips' vehicle pins and key hint, cancels local scans, ignores pending responses, and discards cached positions. Learning it while the large map is open requests a fresh snapshot. Keep the Path of Valheiman Harbor Mark talent setting enabled to use it as the unlock.
 * The map integration requires Path of Valheiman's public stats API and a supported ship-marker implementation. If its API or patch checks fail, BottleShips' vehicle display is disabled and Path of Valheiman retains its own ship display. Other BottleShips features remain available.
+* The ship-marker check supports both the earlier remote-list scan and 6.0.7's live-ship scan with remote-list deduplication. It checks the relevant code contract, not an exact mod version or whole-DLL hash. The stats API supplies the unlock; PoV does not currently expose a public API for handing off ship-marker rendering.
 
 * An active **Mending at Sea** effect uses Path of Valheiman's free ship repair, without BottleShips' Wood cost, cost indicator, or boiling-water restriction for Wood repairs. Refunding or disabling the talent restores the normal BottleShips rules.
 * Path of Valheiman's area repair skips ships that currently require paid BottleShips field repair or are blocked by its boiling-water rule. This also applies to ships with `Build Station = None`. Repairs within station range and existing free-repair exceptions remain available.
 * An anchored ship cannot use Power Paddling. Its hint, stamina consumption, extra force, and paddling FOV effect stop while the anchor is deployed.
 * **Open Shipyard** keeps its own packed-ship items and stored cargo. BottleShips does not also award a bottle during packing. Newly packed ships retain whether construction materials were paid, including the original discount, so redeploying a crate does not make a free-built ship refund materials. Older crates without this information are left unchanged.
-* BottleShips' `Can Be Removed` setting is respected for its four managed ships. Set it to `On` to permit hammer removal and Path of Valheiman packing; the default `Off` prevents both. Path of Valheiman also requires a build station configured on the ship and packing outside that station's range; `Build Station = None` does not activate its crate path.
+* BottleShips' `Can Be Removed` setting is respected for its four managed ships. `On` (the default) permits hammer removal and Path of Valheiman packing; `Off` prevents both. Path of Valheiman also requires a build station configured on the ship and packing outside that station's range; `Build Station = None` does not activate its crate path.
 
 Sailing bonuses, shipbuilding effects, cargo capacity, cart abilities, and exploration modifiers retain their existing behavior. `V` hides or shows BottleShips' temporary vehicle pins after Harbor Mark is unlocked.
 

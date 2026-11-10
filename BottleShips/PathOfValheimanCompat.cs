@@ -250,27 +250,44 @@ internal static class PathOfValheimanCompat
             !IsMapCall(code[start + 1], "AskFar"))
             throw new InvalidOperationException("PoV HarborMark is no longer an isolated map branch.");
         List<CodeInstruction> branch = code.GetRange(start, end - start);
-        // This branch may only query distant ships, enumerate the reply and draw
-        // their marks. Additional effect/helper calls require a new review.
-        string[] expectedCalls = { "AskFar", "GetEnumerator", "get_Current", "ShipIcon", "Concat", "Show", "MoveNext", "Dispose" };
+        // PoV also draws live, player-owned ships before the distant reply in 6.0.7.
+        // Its local set only prevents drawing the same ZDO twice. Both reviewed
+        // variants remain ship-only; new effects or persistent writes need review.
+        bool liveShips = branch.Any(instruction => instruction.operand is MethodInfo method &&
+            method.DeclaringType == typeof(Ship) && method.Name == "get_Instances");
+        string[] expectedCalls = liveShips
+            ? new[] { "AskFar", "GetPlayerID", "get_Instances", "GetEnumerator", "get_Current", "op_Inequality",
+                "GetComponentInParent", "op_Inequality", "GetComponent", "op_Equality", "op_Equality", "IsValid",
+                "GetCreator", "GetZDO", "ToString", "Add", "get_transform", "get_position", "ShipIcon", "Concat",
+                "Show", "MoveNext", "Dispose", "GetEnumerator", "get_Current", "Contains", "ShipIcon", "Concat",
+                "Show", "MoveNext", "Dispose" }
+            : new[] { "AskFar", "GetEnumerator", "get_Current", "ShipIcon", "Concat", "Show", "MoveNext", "Dispose" };
         MethodInfo?[] calls = branch.Where(instruction => instruction.opcode == OpCodes.Call || instruction.opcode == OpCodes.Callvirt)
             .Select(instruction => instruction.operand as MethodInfo).ToArray();
         if (calls.Length != expectedCalls.Length || calls.Where((method, index) =>
-                method == null || method.Name != expectedCalls[index] || !IsHarborCall(method)).Any())
+                method == null || method.Name != expectedCalls[index] || !IsHarborCall(method, liveShips)).Any())
             throw new InvalidOperationException("PoV HarborMark scan calls changed.");
-        int show = branch.FindIndex(instruction => IsMapCall(instruction, "Show"));
-        if (branch.Count(instruction => IsMapCall(instruction, "Show")) != 1 || show < 11 ||
+        int show = branch.FindLastIndex(instruction => IsMapCall(instruction, "Show"));
+        if (branch.Count(instruction => IsMapCall(instruction, "Show")) != (liveShips ? 2 : 1) || show < 11 ||
             branch[show - 11].opcode != OpCodes.Ldarg_0 || !LoadsInt(branch[show - 10], _shipMarkKind) ||
             !IsMapField(branch[show - 8], "PassiveTree.MapSight+Far", "Pos") ||
             !IsMapCall(branch[show - 7], "ShipIcon") || !LoadsInt(branch[show - 6], 0) ||
             branch[show - 5].opcode != OpCodes.Ldstr || (string?)branch[show - 5].operand != "s:" ||
             !IsMapField(branch[show - 3], "PassiveTree.MapSight+Far", "Id") || branch[show - 1].opcode != OpCodes.Ldnull ||
             branch.Count(instruction => IsMapCall(instruction, "AskFar")) != 1 ||
-            branch.Count(instruction => IsMapCall(instruction, "ShipIcon")) != 1 ||
+            branch.Count(instruction => IsMapCall(instruction, "ShipIcon")) != (liveShips ? 2 : 1) ||
             !branch.Any(instruction => IsMapField(instruction, "PassiveTree.MapSight+Far", "Ship")) ||
-            branch.Any(instruction => instruction.Calls(_mapStatHas!) || instruction.opcode == OpCodes.Stfld ||
-                instruction.opcode == OpCodes.Stsfld || instruction.opcode == OpCodes.Newobj))
+            branch.Any(instruction => instruction.Calls(_mapStatHas!) ||
+                (instruction.opcode.Name!.StartsWith("st", StringComparison.Ordinal) && !instruction.IsStloc()) ||
+                instruction.opcode == OpCodes.Calli || instruction.opcode == OpCodes.Jmp ||
+                instruction.opcode == OpCodes.Initobj || instruction.opcode == OpCodes.Cpobj ||
+                instruction.opcode == OpCodes.Cpblk || instruction.opcode == OpCodes.Initblk ||
+                instruction.opcode == OpCodes.Newarr || instruction.opcode == OpCodes.Localloc ||
+                instruction.opcode == OpCodes.Ret || instruction.opcode.FlowControl == FlowControl.Throw ||
+                (!liveShips && instruction.opcode == OpCodes.Newobj)))
             throw new InvalidOperationException("PoV HarborMark ship-only scan contract changed.");
+        ValidateHarborBoundary(code, start, end);
+        if (liveShips) ValidateLiveHarborBranch(branch, show);
         // Keep the shared stale-mark removal path: skipping this branch must make old
         // ship pins unseen, so PoV removes them on its next normal scan (about one second).
         bool clearsSeen = false, checksSeen = false, removesPin = false, removesMark = false;
@@ -303,18 +320,162 @@ internal static class PathOfValheimanCompat
         instruction.operand is MethodInfo method && method.DeclaringType == _mapScan?.DeclaringType &&
         method.Name == name && (instruction.opcode == OpCodes.Call || instruction.opcode == OpCodes.Callvirt);
 
-    private static bool IsHarborCall(MethodInfo method)
+    private static void ValidateHarborBoundary(List<CodeInstruction> code, int start, int end)
+    {
+        var labels = new HashSet<Label>(code.GetRange(start, end - start).SelectMany(instruction => instruction.labels));
+        // Harmony can assign distinct labels to branches targeting the same instruction.
+        var exitLabels = new HashSet<Label>(code[end].labels);
+        for (int i = 0; i < code.Count; ++i)
+        {
+            var targets = code[i].operand is Label target ? new[] { target } : code[i].operand as Label[];
+            if (targets == null) continue;
+            bool inside = i >= start && i < end;
+            if (targets.Any(label => inside ? !labels.Contains(label) && !exitLabels.Contains(label) : labels.Contains(label)))
+                throw new InvalidOperationException("PoV HarborMark control flow crosses the ship branch boundary.");
+        }
+        int depth = 0;
+        foreach (CodeInstruction instruction in code.GetRange(start, end - start))
+        foreach (ExceptionBlock block in instruction.blocks)
+        {
+            if (block.blockType == ExceptionBlockType.BeginExceptionBlock) ++depth;
+            else if (block.blockType == ExceptionBlockType.EndExceptionBlock && depth > 0) --depth;
+            else if (block.blockType != ExceptionBlockType.BeginFinallyBlock || depth == 0)
+                throw new InvalidOperationException("PoV HarborMark exception boundary changed.");
+        }
+        if (depth != 0) throw new InvalidOperationException("PoV HarborMark exception region leaves the ship branch.");
+    }
+
+    private static void ValidateLiveHarborBranch(List<CodeInstruction> branch, int farShow)
+    {
+        int Find(Type type, string name) => branch.FindIndex(instruction => instruction.operand is MethodInfo method &&
+            method.DeclaringType == type && method.Name == name);
+        bool At(int index, OpCode opcode) => index >= 0 && index < branch.Count && branch[index].opcode == opcode;
+        bool Load(int index, int local) => index >= 0 && index < branch.Count && LocalSlot(branch[index], false) == local && local >= 0;
+        bool Jump(int index, OpCode normal, OpCode shortForm, int target) =>
+            (At(index, normal) || At(index, shortForm)) && branch[index].operand is Label label &&
+            target >= 0 && target < branch.Count && branch[target].labels.Contains(label);
+        int show = branch.FindIndex(instruction => IsMapCall(instruction, "Show"));
+        int valid = Find(typeof(ZNetView), "IsValid"), creator = Find(typeof(Piece), "GetCreator");
+        int zdo = Find(typeof(ZNetView), "GetZDO"), idText = Find(typeof(object), "ToString");
+        int add = Find(typeof(HashSet<string>), "Add"), contains = Find(typeof(HashSet<string>), "Contains");
+        int pieceCall = Find(typeof(Component), "GetComponentInParent"), viewCall = Find(typeof(Component), "GetComponent");
+        int firstCurrent = branch.FindIndex(instruction => instruction.operand is MethodInfo method && method.Name == "get_Current");
+        int lastCurrent = branch.FindLastIndex(instruction => instruction.operand is MethodInfo method && method.Name == "get_Current");
+        int farStart = branch.FindIndex(instruction => IsMapField(instruction, "PassiveTree.MapSight", "far"));
+        int setLocal = LocalSlot(branch[3], true), playerLocal = LocalSlot(branch[6], true);
+        int shipLocal = LocalSlot(branch[show - 9], false), idLocal = LocalSlot(branch[idText + 1], true);
+        int pieceLocal = LocalSlot(branch[pieceCall + 1], true), viewLocal = LocalSlot(branch[viewCall + 1], true);
+        int farLocal = LocalSlot(branch[farShow - 9], false);
+        int liveEnumerator = LocalSlot(branch[9], true), farEnumerator = LocalSlot(branch[farStart + 2], true);
+        int[] locals = { setLocal, playerLocal, shipLocal, idLocal, pieceLocal, viewLocal, farLocal, liveEnumerator, farEnumerator };
+        if (show < 11 || farShow < 11 || locals.Any(local => local < 0) || locals.Distinct().Count() != locals.Length ||
+            branch.Count(instruction => instruction.opcode == OpCodes.Newobj) != 1 ||
+            branch[2].opcode != OpCodes.Newobj || !Equals(branch[2].operand, typeof(HashSet<string>).GetConstructor(Type.EmptyTypes)) ||
+            !At(4, OpCodes.Ldarg_1) || Find(typeof(Player), "GetPlayerID") != 5 ||
+            Find(typeof(Ship), "get_Instances") != 7 || !branch[8].Calls(typeof(List<IMonoUpdater>).GetMethod("GetEnumerator")!) ||
+            !branch[firstCurrent].Calls(typeof(List<IMonoUpdater>.Enumerator).GetProperty("Current")!.GetMethod!) ||
+            LocalSlot(branch[firstCurrent - 1], false, true) != liveEnumerator ||
+            !At(firstCurrent + 1, OpCodes.Isinst) || !Equals(branch[firstCurrent + 1].operand, typeof(Ship)) ||
+            LocalSlot(branch[firstCurrent + 2], true) != shipLocal || LocalSlot(branch[lastCurrent + 1], true) != farLocal ||
+            LocalSlot(branch[lastCurrent - 1], false, true) != farEnumerator ||
+            branch[farStart].operand is not FieldInfo farField ||
+            !branch[farStart + 1].Calls(farField.FieldType.GetMethod("GetEnumerator")!) ||
+            !At(show - 11, OpCodes.Ldarg_0) || !LoadsInt(branch[show - 10], _shipMarkKind) ||
+            Find(typeof(Component), "get_transform") != show - 8 || Find(typeof(Transform), "get_position") != show - 7 ||
+            !IsMapCall(branch[show - 6], "ShipIcon") || !LoadsInt(branch[show - 5], 0) ||
+            !At(show - 4, OpCodes.Ldstr) || (string?)branch[show - 4].operand != "s:" || !Load(show - 3, idLocal) ||
+            !At(show - 1, OpCodes.Ldnull) || !Load(pieceCall - 1, shipLocal) || !Load(viewCall - 1, pieceLocal) ||
+            !Load(valid - 1, viewLocal) || !Jump(valid + 1, OpCodes.Brfalse, OpCodes.Brfalse_S, show + 1) ||
+            !Load(creator - 1, pieceLocal) || !Load(creator + 1, playerLocal) ||
+            !Jump(creator + 2, OpCodes.Bne_Un, OpCodes.Bne_Un_S, show + 1) ||
+            zdo != creator + 4 || !Load(zdo - 1, viewLocal) ||
+            !At(zdo + 1, OpCodes.Ldflda) || branch[zdo + 1].operand is not FieldInfo uid || uid.DeclaringType != typeof(ZDO) ||
+            uid.Name != "m_uid" || uid.FieldType != typeof(ZDOID) ||
+            !At(zdo + 2, OpCodes.Constrained) || !Equals(branch[zdo + 2].operand, typeof(ZDOID)) || idText != zdo + 3 ||
+            !Load(add - 2, setLocal) || !Load(add - 1, idLocal) || !At(add + 1, OpCodes.Pop) ||
+            !Load(contains - 3, setLocal) || !Load(contains - 2, farLocal) ||
+            !IsMapField(branch[contains - 1], "PassiveTree.MapSight+Far", "Id") ||
+            !Jump(contains + 1, OpCodes.Brtrue, OpCodes.Brtrue_S, farShow + 1) ||
+            !Load(contains - 6, farLocal) || !IsMapField(branch[contains - 5], "PassiveTree.MapSight+Far", "Ship") ||
+            !Jump(contains - 4, OpCodes.Brfalse, OpCodes.Brfalse_S, farShow + 1) ||
+            !Load(farShow - 4, farLocal) ||
+            locals.Any(local => branch.Count(instruction => LocalSlot(instruction, true) == local) != 1))
+            throw new InvalidOperationException("PoV HarborMark live-ship ownership or deduplication contract changed.");
+        // Only the two null checks may skip a live ship before the validity and owner checks.
+        foreach (int equal in Enumerable.Range(0, branch.Count).Where(i => branch[i].operand is MethodInfo method &&
+                     method.DeclaringType == typeof(UnityEngine.Object) && method.Name == "op_Equality"))
+            if (!At(equal - 1, OpCodes.Ldnull) || (!Load(equal - 2, pieceLocal) && !Load(equal - 2, viewLocal)) ||
+                !Jump(equal + 1, OpCodes.Brtrue, OpCodes.Brtrue_S, show + 1))
+                throw new InvalidOperationException("PoV HarborMark live-ship null guard changed.");
+        // Retaining an owner check is insufficient if a new edge can bypass it.
+        // Verify the two enumerator loops, null-coalescing paths and guard exits.
+        int[] jumps = Enumerable.Range(0, branch.Count).Where(i => branch[i].operand is Label || branch[i].operand is Label[]).ToArray();
+        OpCode[] normal = { OpCodes.Br, OpCodes.Brtrue, OpCodes.Br, OpCodes.Brtrue, OpCodes.Br, OpCodes.Brtrue,
+            OpCodes.Brtrue, OpCodes.Brfalse, OpCodes.Bne_Un, OpCodes.Brtrue, OpCodes.Leave, OpCodes.Br,
+            OpCodes.Brfalse, OpCodes.Brtrue, OpCodes.Brtrue, OpCodes.Leave };
+        OpCode[] compact = { OpCodes.Br_S, OpCodes.Brtrue_S, OpCodes.Br_S, OpCodes.Brtrue_S, OpCodes.Br_S, OpCodes.Brtrue_S,
+            OpCodes.Brtrue_S, OpCodes.Brfalse_S, OpCodes.Bne_Un_S, OpCodes.Brtrue_S, OpCodes.Leave_S, OpCodes.Br_S,
+            OpCodes.Brfalse_S, OpCodes.Brtrue_S, OpCodes.Brtrue_S, OpCodes.Leave_S };
+        int[] targets = { show + 1, pieceCall - 1, pieceCall + 1, viewCall - 1, viewCall + 1, show + 1,
+            show + 1, show + 1, show + 1, firstCurrent - 1, farStart, farShow + 1,
+            farShow + 1, farShow + 1, lastCurrent - 1 };
+        if (jumps.Length != normal.Length || targets.Where((target, index) => !Jump(jumps[index], normal[index], compact[index], target)).Any() ||
+            (!At(jumps[15], OpCodes.Leave) && !At(jumps[15], OpCodes.Leave_S)) ||
+            branch[jumps[15]].operand is not Label exit || branch.Any(instruction => instruction.labels.Contains(exit)))
+            throw new InvalidOperationException("PoV HarborMark live-ship loop or guard flow changed.");
+    }
+
+    private static int LocalSlot(CodeInstruction instruction, bool store, bool address = false)
+    {
+        OpCode code = instruction.opcode;
+        if (address ? code == OpCodes.Ldloca || code == OpCodes.Ldloca_S : store ? instruction.IsStloc() : code == OpCodes.Ldloc || code == OpCodes.Ldloc_S ||
+            code == OpCodes.Ldloc_0 || code == OpCodes.Ldloc_1 || code == OpCodes.Ldloc_2 || code == OpCodes.Ldloc_3)
+        {
+            short first = (store ? OpCodes.Stloc_0 : OpCodes.Ldloc_0).Value;
+            if (code.Value >= first && code.Value <= first + 3) return code.Value - first;
+            return instruction.operand is LocalBuilder local ? local.LocalIndex : Convert.ToInt32(instruction.operand, CultureInfo.InvariantCulture);
+        }
+        return -1;
+    }
+
+    private static bool IsHarborCall(MethodInfo method, bool liveShips)
     {
         if (method.DeclaringType == _mapScan?.DeclaringType)
-            return method.Name is "AskFar" or "ShipIcon" or "Show";
+        {
+            Type[] parameters = method.GetParameters().Select(parameter => parameter.ParameterType).ToArray();
+            if (!method.IsStatic) return false;
+            return method.Name == "AskFar" && method.ReturnType == typeof(void) && parameters.SequenceEqual(new[] { typeof(Player) }) ||
+                   method.Name == "ShipIcon" && method.ReturnType == typeof(Sprite) && parameters.Length == 0 ||
+                   method.Name == "Show" && method.ReturnType == typeof(void) && parameters.Length == 7 &&
+                   parameters[1] == _mapScan.DeclaringType.GetNestedType("Kind", BindingFlags.Public | BindingFlags.NonPublic) &&
+                   parameters.Where((_, index) => index != 1).SequenceEqual(new[] { typeof(Minimap), typeof(Vector3), typeof(Sprite), typeof(bool), typeof(string), typeof(string) });
+        }
         if (method.DeclaringType == typeof(string))
             return method == typeof(string).GetMethod(nameof(string.Concat), new[] { typeof(string), typeof(string) });
-        if (method.DeclaringType == typeof(IDisposable)) return method.Name == nameof(IDisposable.Dispose);
+        if (method.DeclaringType == typeof(IDisposable)) return method == typeof(IDisposable).GetMethod(nameof(IDisposable.Dispose));
         Type? type = method.DeclaringType;
-        return type?.IsGenericType == true &&
+        if (type?.IsGenericType == true &&
                (type.GetGenericTypeDefinition() == typeof(List<>) || type.GetGenericTypeDefinition() == typeof(List<>.Enumerator)) &&
-               type.GetGenericArguments().Single().FullName == "PassiveTree.MapSight+Far" &&
-               method.Name is "GetEnumerator" or "get_Current" or "MoveNext";
+               (type.GetGenericArguments().Single().FullName == "PassiveTree.MapSight+Far" ||
+                (liveShips && type.GetGenericArguments().Single() == typeof(IMonoUpdater))) &&
+               method.Name is "GetEnumerator" or "get_Current" or "MoveNext") return true;
+        if (!liveShips) return false;
+        if (type == typeof(Player)) return method == typeof(Player).GetMethod(nameof(Player.GetPlayerID), Type.EmptyTypes);
+        if (type == typeof(Ship)) return method == typeof(Ship).GetProperty("Instances")?.GetMethod;
+        if (type == typeof(Piece)) return method == typeof(Piece).GetMethod(nameof(Piece.GetCreator), Type.EmptyTypes);
+        if (type == typeof(ZNetView)) return method == typeof(ZNetView).GetMethod(nameof(ZNetView.IsValid), Type.EmptyTypes) ||
+            method == typeof(ZNetView).GetMethod(nameof(ZNetView.GetZDO), Type.EmptyTypes);
+        if (type == typeof(UnityEngine.Object)) return method == typeof(UnityEngine.Object).GetMethod("op_Equality") ||
+            method == typeof(UnityEngine.Object).GetMethod("op_Inequality");
+        if (type == typeof(Component)) return method == typeof(Component).GetProperty("transform")?.GetMethod ||
+            (method.IsGenericMethod && method.GetParameters().Length == 0 &&
+             ((method.Name == "GetComponentInParent" && method.GetGenericArguments().SequenceEqual(new[] { typeof(Piece) })) ||
+              (method.Name == "GetComponent" && method.GetGenericArguments().SequenceEqual(new[] { typeof(ZNetView) }))));
+        if (type == typeof(Transform)) return method == typeof(Transform).GetProperty("position")?.GetMethod;
+        if (type == typeof(object)) return method == typeof(object).GetMethod(nameof(ToString), Type.EmptyTypes);
+        return type == typeof(HashSet<string>) &&
+               (method == typeof(HashSet<string>).GetMethod("Add", new[] { typeof(string) }) ||
+                method == typeof(HashSet<string>).GetMethod("Contains", new[] { typeof(string) }));
     }
 
     private static bool IsMapField(CodeInstruction instruction, string type, string name) =>
