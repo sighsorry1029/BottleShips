@@ -183,19 +183,6 @@ namespace BottleShipsVehicleMapChecks
         public T? GetComponent<T>() where T : class => new PlayerController() as T;
         public void Message(MessageHud.MessageType type, string text) => Messages.Add(text);
     }
-    public static class PathOfValheimanCompat
-    {
-        public static bool Loaded, HarborMark, Ready = true, ContractValid = true;
-        public static int Validations;
-        public static bool CanUseVehicleMap(Player? player) => !Loaded ||
-            (Ready && HarborMark && player != null && player == Player.m_localPlayer);
-        public static bool ValidateVehicleMapIntegration()
-        {
-            Validations++;
-            if (Loaded && !ContractValid) Ready = false;
-            return !Loaded || Ready;
-        }
-    }
     public static class MessageHud { public enum MessageType { Center } }
     public class Minimap
     {
@@ -286,9 +273,6 @@ namespace BottleShipsVehicleMapChecks
             ZNet.instance = new ZNet(); ZDOMan.instance = new ZDOMan();
             ZNetScene.instance = new ZNetScene(); Game.instance = new Game();
             Player.m_localPlayer = new Player(); Minimap.instance = new Minimap();
-            PathOfValheimanCompat.Loaded = PathOfValheimanCompat.HarborMark = false;
-            PathOfValheimanCompat.Ready = PathOfValheimanCompat.ContractValid = true;
-            PathOfValheimanCompat.Validations = 0;
             Time.realtimeSinceStartup = 10; PlayerController.InputAllowed = true;
             ToggleMyVehiclePinsKey.Value = new KeyboardShortcut(KeyCode.V);
             foreach (string name in new[] { "Raft", "Cart", "House" })
@@ -336,11 +320,13 @@ namespace BottleShipsVehicleMapChecks
         internal static string RunChecks()
         {
             var settings = new BottleShipsPlugin(); BindConfig(settings);
-            Check(settings.Bindings.Count == 1 && settings.Bindings[0].Name == "Toggle My Vehicle Pins Key",
-                "Only shortcut is configurable; visibility setting removed");
-            Check(settings.Bindings[0].Group == "01 - General" && settings.Bindings[0].Category == "01 - General" &&
-                settings.Bindings[0].Order < 950 && !settings.Bindings[0].Synced,
-                "Local shortcut is stored in General and displayed after other General settings");
+            Check(settings.Bindings.Count == 2 && settings.Bindings[0].Name == "Enable Vehicle Map Pins" &&
+                EnableVehicleMapPins.Value == BottleShipsPlugin.Toggle.On &&
+                settings.Bindings[1].Name == "Toggle My Vehicle Pins Key" && ToggleMyVehiclePinsKey.Value.MainKey == KeyCode.V,
+                "Vehicle pins default on and the existing V shortcut is preserved");
+            Check(settings.Bindings.All(b => b.Group == "01 - General" && b.Category == "01 - General" && !b.Synced) &&
+                settings.Bindings[0].Order < 950 && settings.Bindings[0].Order > settings.Bindings[1].Order,
+                "Both settings are client-only in General with the shortcut below the feature toggle");
             Check(Translate("Invalid {", "V") == "Invalid {", "Malformed external formatting cannot break map updates");
             Reset();
             var own = Add(1, "Raft", 42); Add(2, "Cart", 42); Add(3, "Raft", 77, 42);
@@ -386,60 +372,48 @@ namespace BottleShipsVehicleMapChecks
             Close(); Minimap.instance.m_mode = Minimap.MapMode.None; ObserveMap(Minimap.instance);
             Check(_map == null && ZDOMan.instance.Scans == scans, "No-map world does not scan");
 
-            Reset(); PathOfValheimanCompat.Loaded = true;
-            Add(1, "Raft", 42); Add(2, "Cart", 42); Open(); Tick();
-            Check(_map == null && _hint == null && ZDOMan.instance.Scans == 0,
-                "PoV without Harbor Mark does not scan or show vehicle controls");
-            PathOfValheimanCompat.HarborMark = true; Tick(); Game.instance.Drain(); Tick();
-            Check(Pins.Count == 2 && _hint != null, "Harbor Mark unlocks boats and carts while the map stays open");
-            int validations = PathOfValheimanCompat.Validations;
-            for (int frame = 0; frame < 10; frame++) Tick();
-            Check(PathOfValheimanCompat.Validations == validations,
-                "Idle UI does not repeatedly inspect Harmony contracts");
-            var unlockedHint = _hint!; PathOfValheimanCompat.HarborMark = false; Tick();
-            Check(_map == null && Pins.Count == 0 && _snapshot.Count == 0 && unlockedHint.Destroyed,
-                "Refund or disabled talent removes vehicle pins, cached positions and key hint");
-            long revokedId = _requestId;
-            PathOfValheimanCompat.HarborMark = true; Tick();
-            Check(_pending && _visible && _requestId > revokedId,
-                "Unlocking again starts a fresh visible snapshot");
-            PathOfValheimanCompat.HarborMark = false; Tick();
-            Check(Game.instance.Routines.Count == 0 && !_pending && _map == null,
-                "Revoking while scanning cancels the local coroutine");
-            PathOfValheimanCompat.HarborMark = true; Tick();
-            PathOfValheimanCompat.HarborMark = false; Game.instance.Drain();
-            Check(_map == null && Pins.Count == 0 && !_pending,
-                "Completed local scan cannot publish after refund before the next UI tick");
+            Reset(); EnableVehicleMapPins.Value = BottleShipsPlugin.Toggle.Off;
+            Add(1, "Raft", 42); Add(2, "Cart", 42);
+            Open(); Keys.Down = true; Tick(); Keys.Down = false; Close(); Open(); Tick();
+            Check(_map == null && _hint == null && !_pending && ZDOMan.instance.Scans == 0 && Game.instance.Routines.Count == 0,
+                "Off persists across openings without local scans, pins, hint or shortcut actions");
+            var thirdPartyPin = Minimap.instance.AddPin(default, Minimap.PinType.Icon3, "Other mod", false, false);
+            EnableVehicleMapPins.Value = BottleShipsPlugin.Toggle.On; Tick(); Game.instance.Drain(); Tick();
+            Check(Pins.Count == 2 && _hint != null, "Turning on with the map open shows both boat and cart pins");
+            var enabledHint = _hint!;
+            EnableVehicleMapPins.Value = BottleShipsPlugin.Toggle.Off; Tick();
+            Check(_map == null && Pins.Count == 0 && _snapshot.Count == 0 && enabledHint.Destroyed &&
+                Minimap.instance.Pins.Single() == thirdPartyPin, "Turning off removes only BottleShips pins, hint and snapshot");
+            EnableVehicleMapPins.Value = BottleShipsPlugin.Toggle.On; Tick();
+            var activePeer = AddPeer(42); OnRequest(activePeer.m_rpc, Request(1));
+            EnableVehicleMapPins.Value = BottleShipsPlugin.Toggle.Off; Tick(); Game.instance.Drain();
+            Check(!_pending && _localScan == null && Game.instance.Routines.Count == 0 && activePeer.m_rpc.Sent.Count == 1 &&
+                TryReadSnapshot(activePeer.m_rpc.Sent[0].Package, out _, out var peerStatus, out var peerPins) &&
+                peerStatus == SnapshotStatus.Ready && peerPins.Count == 2,
+                "Host disabling pins cancels its local scan while an authenticated peer still receives its vehicles");
 
-            Reset(); PathOfValheimanCompat.Loaded = PathOfValheimanCompat.HarborMark = true;
-            PathOfValheimanCompat.ContractValid = false; Open(); Tick();
-            Check(_map == null && ZDOMan.instance.Scans == 0 && PathOfValheimanCompat.Validations == 1,
-                "Invalid integration contract stops the request without repeated attempts");
-            Reset(); PathOfValheimanCompat.Loaded = PathOfValheimanCompat.HarborMark = true;
-            Add(1, "Raft", 42); Open(); PathOfValheimanCompat.ContractValid = false; Game.instance.Drain();
-            Check(_map == null && Pins.Count == 0, "Lost suppression patch rejects an in-flight snapshot");
-            Reset(); PathOfValheimanCompat.Loaded = PathOfValheimanCompat.HarborMark = true;
-            Add(1, "Raft", 42); Open(); Game.instance.Drain(); Tick();
-            PathOfValheimanCompat.ContractValid = false; Keys.Down = true; Tick();
-            Check(_map == null && Pins.Count == 0 && _hint == null,
-                "Toggling cached pins rechecks a changed suppression contract");
-
-            Reset(); PathOfValheimanCompat.Loaded = PathOfValheimanCompat.HarborMark = true;
-            ZNet.instance.Server = false; var unlockServer = new ZRpc(); ZNet.instance.ServerRpc = unlockServer;
-            Open(); long unlockedRequest = _requestId; PathOfValheimanCompat.HarborMark = false;
-            OnSnapshot(unlockServer, Packet(unlockedRequest, 0, 1,
+            Reset(); ZNet.instance.Server = false;
+            var toggleServer = new ZRpc(); ZNet.instance.ServerRpc = toggleServer;
+            EnableVehicleMapPins.Value = BottleShipsPlugin.Toggle.Off; Open(); Tick(); Close(); Open();
+            Check(toggleServer.Sent.Count == 0, "Opening the map while off sends no vehicle requests");
+            EnableVehicleMapPins.Value = BottleShipsPlugin.Toggle.On; Tick();
+            long previousRequest = _requestId;
+            EnableVehicleMapPins.Value = BottleShipsPlugin.Toggle.Off;
+            OnSnapshot(toggleServer, Packet(previousRequest, 0, 1,
                 new VehicleEntry(new ZDOID(10, 1), "Raft".GetStableHashCode(), new Vector3(1, 0, 1))));
-            Check(_map == null && Pins.Count == 0 && !_pending,
-                "Remote response after node loss is discarded before a UI tick");
-            PathOfValheimanCompat.HarborMark = true; Tick();
-            OnSnapshot(unlockServer, Packet(unlockedRequest, 0, 0));
-            Check(_pending && _requestId > unlockedRequest, "Re-unlocked request cannot accept the prior response");
+            Check(_map == null && Pins.Count == 0 && !_pending, "A reply before the next UI tick is discarded when off");
+            EnableVehicleMapPins.Value = BottleShipsPlugin.Toggle.On; Tick();
+            OnSnapshot(toggleServer, Packet(previousRequest, 0, 0));
+            Check(_pending && _requestId > previousRequest && toggleServer.Sent.Count == 2,
+                "Re-enabling requests fresh positions and ignores the prior reply");
 
-            Reset(); PathOfValheimanCompat.Loaded = true; Player.m_localPlayer = null;
-            Add(1, "Raft", 42); var unlockedPeer = AddPeer(42); OnRequest(unlockedPeer.m_rpc, Request(1));
+            Reset(); EnableVehicleMapPins.Value = BottleShipsPlugin.Toggle.Off; Player.m_localPlayer = null;
+            Add(1, "Raft", 42); var dedicatedPeer = AddPeer(42); OnRequest(dedicatedPeer.m_rpc, Request(1));
             Game.instance.Drain();
-            Check(unlockedPeer.m_rpc.Sent.Count == 1,
-                "Dedicated server serves authenticated peers independently of local-player node state");
+            Check(dedicatedPeer.m_rpc.Sent.Count == 1 &&
+                TryReadSnapshot(dedicatedPeer.m_rpc.Sent[0].Package, out _, out peerStatus, out peerPins) &&
+                peerStatus == SnapshotStatus.Ready && peerPins.Count == 1,
+                "Dedicated server serves authenticated peers with no local player and its display setting off");
 
             Reset(); own = Add(1, "Raft", 42);
             Check(TryGetOwnVehicle(ZDOMan.instance, own, 42, own.Prefab, out _), "Recorded creator accepted");

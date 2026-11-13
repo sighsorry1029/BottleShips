@@ -36,11 +36,6 @@ internal static partial class PlayerVehicleMap
         KeyboardShortcut shortcut = ToggleMyVehiclePinsKey.Value;
         if (IsKeyDown(shortcut) && CanProcessMapShortcutInput())
         {
-            if (!PathOfValheimanCompat.ValidateVehicleMapIntegration())
-            {
-                CloseMap();
-                return;
-            }
             _visible = !_visible;
             RenderPins();
         }
@@ -57,16 +52,14 @@ internal static partial class PlayerVehicleMap
 
     private static void ObserveMap(Minimap? map)
     {
-        if (!IsLargeMap(map) || Player.m_localPlayer == null || ZNet.instance == null ||
-            !PathOfValheimanCompat.CanUseVehicleMap(Player.m_localPlayer))
+        if (EnableVehicleMapPins?.Value != BottleShipsPlugin.Toggle.On || !IsLargeMap(map) ||
+            Player.m_localPlayer == null || ZNet.instance == null)
         {
-            CloseMap();
+            if (!ReferenceEquals(_map, null)) CloseMap();
             return;
         }
         if (_map == map && _mapPlayer == Player.m_localPlayer && _mapNetwork == ZNet.instance) return;
         CloseMap();
-        // Check the optional integration at request boundaries, not every UI frame.
-        if (!PathOfValheimanCompat.ValidateVehicleMapIntegration()) return;
         _map = map;
         _mapPlayer = Player.m_localPlayer;
         _mapNetwork = ZNet.instance;
@@ -83,9 +76,7 @@ internal static partial class PlayerVehicleMap
         if (!_pending || requestId != _requestId || !IsLargeMap(_map) ||
             _map != Minimap.instance || _mapPlayer == null || _mapPlayer != Player.m_localPlayer ||
             _mapNetwork == null || _mapNetwork != ZNet.instance) return;
-        // A node refund or server talent change can precede the next UI tick.
-        if (!PathOfValheimanCompat.CanUseVehicleMap(_mapPlayer) ||
-            !PathOfValheimanCompat.ValidateVehicleMapIntegration())
+        if (EnableVehicleMapPins.Value != BottleShipsPlugin.Toggle.On)
         {
             CloseMap();
             return;
@@ -221,6 +212,7 @@ internal static partial class PlayerVehicleMap
         }
     }
 
+    private static ConfigEntry<BottleShipsPlugin.Toggle> EnableVehicleMapPins = null!;
     private static ConfigEntry<KeyboardShortcut> ToggleMyVehiclePinsKey = null!;
     private static readonly Func<PlayerController, bool, bool> TakeInput =
         AccessTools.MethodDelegate<Func<PlayerController, bool, bool>>(
@@ -229,9 +221,13 @@ internal static partial class PlayerVehicleMap
     internal static void BindConfig(BottleShipsPlugin plugin)
     {
         Dispose();
+        EnableVehicleMapPins = plugin.config(
+            "01 - General", "Enable Vehicle Map Pins", BottleShipsPlugin.Toggle.On,
+            "Show boats and carts built by your character on the large map. Turn this off if another mod provides your vehicle pins.",
+            synchronizedSetting: false, order: 945);
         ToggleMyVehiclePinsKey = plugin.config(
             "01 - General", "Toggle My Vehicle Pins Key", new KeyboardShortcut(KeyCode.V),
-            "Show or hide your boats and carts while the large map is open. Reopening the map always shows them and refreshes their positions. No minimap pins.",
+            "Temporarily show or hide BottleShips vehicle pins while the large map is open. With Enable Vehicle Map Pins on, reopening the map shows them again.",
             synchronizedSetting: false, order: 940);
         ToggleMyVehiclePinsKey.SettingChanged += OnShortcutChanged;
     }

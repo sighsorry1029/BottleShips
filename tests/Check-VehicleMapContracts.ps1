@@ -28,7 +28,7 @@ try {
             foreach ($instruction in $method.Body.Instructions) {
                 $operand = $instruction.Operand
                 if ($operand -isnot [Mono.Cecil.MemberReference]) { continue }
-                if ($operand.FullName -match 'PortalRules|ShipTweaksManager') {
+                if ($operand.FullName -match 'PortalRules|ShipTweaksManager|PathOfValheimanCompat') {
                     throw "Unexpected dependency in vehicle map: $operand"
                 }
                 if ($operand -isnot [Mono.Cecil.MethodReference] -and $operand -isnot [Mono.Cecil.FieldReference]) { continue }

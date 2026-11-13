@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.19
+
+- Added the client-only `Enable Vehicle Map Pins` setting under General, defaulting to `On`. Set it to `Off` to hide BottleShips' boat and cart pins across map openings and game sessions when using another mod's vehicle markers.
+- Turning the setting off removes BottleShips' pins, key hint and cached positions, cancels local scans, and ignores late replies. Turning it back on with the map open requests fresh positions. Hosts continue serving other players' authenticated requests with their own display turned off.
+- Removed Path of Valheiman's Harbor Mark requirement and ship-marker suppression from BottleShips. Each mod now controls its own markers; turn BottleShips' setting off to use Path of Valheiman's talent-based display.
+
 ## 1.1.18
 
 - Fixed Harbor Mark map integration with Path of Valheiman 6.0.7's live-ship scan and remote-ship deduplication. The active effect still unlocks BottleShips' boat and cart display, replacing only Path of Valheiman's ship markers.

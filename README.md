@@ -71,9 +71,9 @@ BottleShips must be installed on the server and every connecting client because 
 
 ### My boats and carts on the map
 
-When available, the large map starts with boats and carts built by your **current character** visible, using each vehicle's build icon. Press **V** to show or hide them while the map is open; the map key hint shows the current action. The client-only `Toggle My Vehicle Pins Key` setting appears at the bottom of General in Configuration Manager. With Path of Valheiman installed, an active **Harbor Mark** effect is required for both boats and carts; otherwise the feature is available without a talent.
+Under **01 - General**, set `Enable Vehicle Map Pins` to **Off** to hide BottleShips' boat and cart pins and their key hint across map openings and game sessions. This setting defaults to **On** and applies to your client only. You can turn it off if another mod already shows your vehicles.
 
-Positions are requested from the server once when you open the large map, including vehicles outside your loaded area. They remain fixed until the map is closed and reopened. Toggling visibility reuses the snapshot and does not save a setting. Reopening the map shows the pins again. There are no minimap pins or saved map pins.
+When enabled, opening the large map shows boats and carts built by your **current character**, using each vehicle's build icon. Positions refresh when you open the map or turn the setting back on with the map open, including vehicles outside your loaded area. Press **V** (`Toggle My Vehicle Pins Key`) to hide or show those positions until you close the map. BottleShips adds no minimap or saved pins.
 
 The original builder's character ID determines ownership, regardless of who is driving or currently owns the network object. Vehicles without a recorded builder are excluded. Both ordinary and bottle-based construction are supported, including modded prefabs using `Ship` or `Vagon` with a `Piece` build icon. This feature is independent of PortalRules and the handling/exploration tweaks disabled by RockTheBoat.
 
@@ -125,18 +125,14 @@ Synced options are enforced from the server when BottleShips is installed on bot
 
 BottleShips includes optional integration for Path of Valheiman. The integration has been statically checked against 5.1.2 and 6.0.7; this is not an in-game multiplayer validation. Path of Valheiman is not required or included in the package.
 
-* **Harbor Mark** unlocks BottleShips' boat and cart display. While this integration is active, BottleShips replaces Path of Valheiman's ship pins with its own large-map-only display: positions refresh when the map is opened, and there are no minimap pins or periodic position updates. Other Path of Valheiman map markers are unchanged.
-* Refunding Harbor Mark or disabling its effect removes BottleShips' vehicle pins and key hint, cancels local scans, ignores pending responses, and discards cached positions. Learning it while the large map is open requests a fresh snapshot. Keep the Path of Valheiman Harbor Mark talent setting enabled to use it as the unlock.
-* The map integration requires Path of Valheiman's public stats API and a supported ship-marker implementation. If its API or patch checks fail, BottleShips' vehicle display is disabled and Path of Valheiman retains its own ship display. Other BottleShips features remain available.
-* The ship-marker check supports both the earlier remote-list scan and 6.0.7's live-ship scan with remote-list deduplication. It checks the relevant code contract, not an exact mod version or whole-DLL hash. The stats API supplies the unlock; PoV does not currently expose a public API for handing off ship-marker rendering.
-
+* **Harbor Mark** controls Path of Valheiman's own ship markers. BottleShips displays its boat and cart pins independently of that talent. To use only Path of Valheiman's markers, set `Enable Vehicle Map Pins` to **Off** in BottleShips.
 * An active **Mending at Sea** effect uses Path of Valheiman's free ship repair, without BottleShips' Wood cost, cost indicator, or boiling-water restriction for Wood repairs. Refunding or disabling the talent restores the normal BottleShips rules.
 * Path of Valheiman's area repair skips ships that currently require paid BottleShips field repair or are blocked by its boiling-water rule. This also applies to ships with `Build Station = None`. Repairs within station range and existing free-repair exceptions remain available.
 * An anchored ship cannot use Power Paddling. Its hint, stamina consumption, extra force, and paddling FOV effect stop while the anchor is deployed.
 * **Open Shipyard** keeps its own packed-ship items and stored cargo. BottleShips does not also award a bottle during packing. Newly packed ships retain whether construction materials were paid, including the original discount, so redeploying a crate does not make a free-built ship refund materials. Older crates without this information are left unchanged.
 * BottleShips' `Can Be Removed` setting is respected for its four managed ships. `On` (the default) permits hammer removal and Path of Valheiman packing; `Off` prevents both. Path of Valheiman also requires a build station configured on the ship and packing outside that station's range; `Build Station = None` does not activate its crate path.
 
-Sailing bonuses, shipbuilding effects, cargo capacity, cart abilities, and exploration modifiers retain their existing behavior. `V` hides or shows BottleShips' temporary vehicle pins after Harbor Mark is unlocked.
+Sailing bonuses, shipbuilding effects, cargo capacity, cart abilities, and exploration modifiers retain their existing behavior.
 
 ### Localization support
 * There should be `BottleShips.English.yml` in plugins folder. Translate it to your language and put it anywhere inside of the Bepinex folder
