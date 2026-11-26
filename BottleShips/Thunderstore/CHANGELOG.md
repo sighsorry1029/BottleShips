@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.20
+
+- Dropped bottles can now roll down slopes.
+- Restored the individual crafting station and level for each of the 11 bottle recipes. For example, a longship bottle requires a level 1 forge and a drakkar bottle requires a level 2 artisan table by default.
+- All 11 pieces now default to `Build Station = None`, so you can place them outside station range. Existing configurations keep their saved values. Reset the `Recipe Station` and `Build Station` entries for any pieces where you want the new defaults.
+- Reorganized the README gallery with side-by-side examples of crafting and placement. All 18 images and animations are visible inline and link to their originals.
+
 ## 1.1.19
 
 - Added the client-only `Enable Vehicle Map Pins` setting under General, defaulting to `On`. Set it to `Off` to hide BottleShips' boat and cart pins across map openings and game sessions when using another mod's vehicle markers.

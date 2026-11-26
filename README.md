@@ -1,154 +1,113 @@
-## BottleShips
+# BottleShips
 
-BottleShips adds 11 bottle items, each containing a ship, cart, battering ram, catapult, portal, trap, or ballista. Use a bottle as the build resource and place the full-size piece when you need it.
+Carry a spare longship to sea or take a portal to your next landing. Craft a bottle, then select its matching piece in the hammer's build menu. One bottle builds the full-size piece.
 
-BottleShips must be installed on the server and every connecting client because it adds synchronized network prefabs and gameplay settings.
+Select any image to see it at full size.
 
-![](https://i.ibb.co/N2Bw4btD/Screenshot-2025-08-27-121337.png)
+<table>
+  <tr>
+    <td><a href="https://i.ibb.co/Tqh7nHzN/fetchup.gif"><img src="https://i.ibb.co/Tqh7nHzN/fetchup.gif" alt="A player takes a longship bottle to shore and builds the ship" width="390"></a><br>Launch a longship from shore.</td>
+    <td><a href="https://i.ibb.co/MDrpgXBp/Survival.gif"><img src="https://i.ibb.co/MDrpgXBp/Survival.gif" alt="A player boards a replacement longship after losing one to a serpent" width="390"></a><br>Replace a wreck with a spare bottle and climb back aboard.</td>
+  </tr>
+</table>
 
-* Each bottle is tied to the matching piece.
-* Pieces can be configured to use the bottle recipe or their original build recipe.
-* Build stations, build resources, bottle recipes, bottle weight, stack size, teleportability, and removal behavior are all configurable.
+## The bottle collection
 
-![](https://i.ibb.co/Tqh7nHzN/fetchup.gif)
+[<img src="https://i.ibb.co/N2Bw4btD/Screenshot-2025-08-27-121337.png" alt="A wall of item stands displaying the bottle collection" width="859">](https://i.ibb.co/N2Bw4btD/Screenshot-2025-08-27-121337.png)
 
-* Keep bottles on item stands and grab one whenever you are ready to build.
-* No more digging through containers for every ship, portal, or siege piece.
+*Keep the bottle collection on item stands between trips.*
 
-![](https://i.ibb.co/MDrpgXBp/Survival.gif)
+<table>
+  <tr>
+    <td><a href="https://i.ibb.co/8n2WS3sV/Screenshot-2025-08-27-104256.png"><img src="https://i.ibb.co/8n2WS3sV/Screenshot-2025-08-27-104256.png" alt="Portal and trap bottles mounted on a wall" width="385"></a><br>Portals and traps on the display wall.</td>
+    <td><a href="https://i.ibb.co/JjWjhwXs/Screenshot-2025-08-27-104245.png"><img src="https://i.ibb.co/JjWjhwXs/Screenshot-2025-08-27-104245.png" alt="Ship bottles arranged along the display wall" width="356"></a><br>Ship bottles at the other end of the wall.</td>
+  </tr>
+</table>
 
-* If a ship breaks, carrying a spare bottle lets you rebuild it quickly.
+<table>
+  <tr>
+    <td><a href="https://i.ibb.co/XB3b8jM/Screenshot-2025-08-27-003527.png"><img src="https://i.ibb.co/XB3b8jM/Screenshot-2025-08-27-003527.png" alt="Four bottles holding different wooden ships" width="348"></a><br>Raft, karve, longship, and drakkar.</td>
+    <td><a href="https://i.ibb.co/sJk9qYg8/Screenshot-2025-08-27-003717.png"><img src="https://i.ibb.co/sJk9qYg8/Screenshot-2025-08-27-003717.png" alt="Bottled cart, battering ram, and catapult" width="255"></a><br>Cart, battering ram, and catapult.</td>
+  </tr>
+</table>
 
-![](https://i.ibb.co/8n2WS3sV/Screenshot-2025-08-27-104256.png)
+<table>
+  <tr>
+    <td><a href="https://i.ibb.co/yc6NsMFS/Screenshot-2025-08-27-003754.png"><img src="https://i.ibb.co/yc6NsMFS/Screenshot-2025-08-27-003754.png" alt="The two portal designs in bottles" width="260"></a><br>Wood and stone portals.</td>
+    <td><a href="https://i.ibb.co/svyLCbRJ/Screenshot-2025-08-27-003829.png"><img src="https://i.ibb.co/svyLCbRJ/Screenshot-2025-08-27-003829.png" alt="Bottles holding a troll trap and a ballista" width="270"></a><br>Troll trap and ballista.</td>
+  </tr>
+</table>
 
-![](https://i.ibb.co/JjWjhwXs/Screenshot-2025-08-27-104245.png)
+## Crafting bottles
 
-* Bottles on item stands.
+In multiplayer, install the same version of BottleShips on the host or dedicated server and on every player's client.
 
-![](https://i.ibb.co/XB3b8jM/Screenshot-2025-08-27-003527.png)
+| Crafting station | Bottles you can craft by default |
+| --- | --- |
+| Workbench, level 1 | Raft, wood portal |
+| Forge, level 1 | Karve, longship, cart |
+| Artisan table, level 1 | Troll trap, ballista |
+| Artisan table, level 2 | Drakkar, battering ram, catapult, stone portal |
 
-* Raft, karve, longship, and drakkar bottles.
+[<img src="https://i.ibb.co/kgK6vQw4/Screenshot-2025-08-27-010414.png" alt="The longship bottle recipe in the forge menu" width="540">](https://i.ibb.co/kgK6vQw4/Screenshot-2025-08-27-010414.png)
 
-![](https://i.ibb.co/sJk9qYg8/Screenshot-2025-08-27-003717.png)
+*At a level 1 forge, select the longship bottle to see its materials.*
 
-* Cart, battering ram, and catapult bottles.
+<table>
+  <tr>
+    <td><a href="https://i.ibb.co/4R4bLrwh/Screenshot-2025-08-27-010540.png"><img src="https://i.ibb.co/4R4bLrwh/Screenshot-2025-08-27-010540.png" alt="The wood portal bottle recipe at a workbench" width="390"></a><br>Wood portal at a level 1 workbench.</td>
+    <td><a href="https://i.ibb.co/sdg1sDM8/Screenshot-2025-08-27-010317.png"><img src="https://i.ibb.co/sdg1sDM8/Screenshot-2025-08-27-010317.png" alt="The stone portal bottle recipe at an artisan table" width="387"></a><br>Stone portal at a level 2 artisan table.</td>
+  </tr>
+</table>
 
-![](https://i.ibb.co/yc6NsMFS/Screenshot-2025-08-27-003754.png)
+## Building from a bottle
 
-* Wood portal and stone portal bottles.
+Take the bottle to the build site and equip your hammer. All 11 pieces allow placement outside station range and hammer removal by default.
 
-![](https://i.ibb.co/svyLCbRJ/Screenshot-2025-08-27-003829.png)
+<table>
+  <tr>
+    <td><a href="https://i.ibb.co/2YmzVjPw/Screenshot-2025-08-27-005812.png"><img src="https://i.ibb.co/2YmzVjPw/Screenshot-2025-08-27-005812.png" alt="The inventory tooltip showing the weight of a drakkar bottle" width="429"></a><br>Check the drakkar bottle's weight before carrying it to shore.</td>
+    <td><a href="https://i.ibb.co/TMXrG2bc/Screenshot-2025-08-27-004745.png"><img src="https://i.ibb.co/TMXrG2bc/Screenshot-2025-08-27-004745.png" alt="The hammer build preview for a drakkar" width="355"></a><br>Choose the drakkar in the build menu to launch it.</td>
+  </tr>
+</table>
 
-* Troll trap and ballista bottles.
+<table>
+  <tr>
+    <td><a href="https://i.ibb.co/Pv7kQCDr/Screenshot-2025-08-27-004620.png"><img src="https://i.ibb.co/Pv7kQCDr/Screenshot-2025-08-27-004620.png" alt="A battering ram being positioned with the hammer" width="238"></a><br>Position a battering ram at the gate.</td>
+    <td><a href="https://i.ibb.co/8gsvRL2q/Screenshot-2025-08-27-004533.png"><img src="https://i.ibb.co/8gsvRL2q/Screenshot-2025-08-27-004533.png" alt="A catapult in the hammer build preview" width="244"></a><br>Choose a firing position for the catapult.</td>
+  </tr>
+</table>
 
-![](https://i.ibb.co/4R4bLrwh/Screenshot-2025-08-27-010540.png)
+<table>
+  <tr>
+    <td><a href="https://i.ibb.co/qMdjS4py/Screenshot-2025-08-27-004201.png"><img src="https://i.ibb.co/qMdjS4py/Screenshot-2025-08-27-004201.png" alt="A stone portal being positioned with the hammer" width="221"></a><br>Place a stone portal.</td>
+    <td><a href="https://i.ibb.co/sYW6Srf/Screenshot-2025-08-27-004246.png"><img src="https://i.ibb.co/sYW6Srf/Screenshot-2025-08-27-004246.png" alt="A ballista in the hammer build preview" width="231"></a><br>Guard it with a ballista.</td>
+  </tr>
+</table>
 
-* Bottle recipes at the workbench.
+## On the water
 
-![](https://i.ibb.co/kgK6vQw4/Screenshot-2025-08-27-010414.png)
+- **Find your boats and carts.** Open the large map to see vehicles built by your current character, even far from shore. Press **V** to hide or show them until you close the map. To keep them hidden across sessions, turn off `Enable Vehicle Map Pins` on your client.
+- **Row together.** At **Slow** or **Back**, the helmsman and seated passengers can hold **Run** (Left Shift by default on keyboard). Each active paddler adds 50% paddling force by default and spends stamina. Turn off `Show Power Paddling HUD` to hide the hint.
+- **Repair with Wood.** Aim the hammer's repair tool at a damaged ship to see its Wood cost. Repairs are free within the ship's build station range, using the workbench if no station is set. Outside that range, a full repair costs one Wood per 200 missing durability by default, rounded up. In boiling water, only the drakkar (`VikingShip_Ashlands`) can use Wood repairs by default.
 
-* Bottle recipes at the forge.
+## Settings
 
-![](https://i.ibb.co/sdg1sDM8/Screenshot-2025-08-27-010317.png)
+Launch the game once to generate `BepInEx/config/sighsorry.BottleShips.cfg`. The server syncs gameplay settings. Vehicle pins, the paddling hint, and extended cart interaction are personal settings.
 
-* Bottle recipes at the artisan table.
+- **Bottles and building.** In each bottle's section, `Recipe Station` sets where you craft the bottle and the minimum station level. `Build Station` sets where you can place the piece and defaults to `None`. Existing configs keep their saved values. You can also change materials, weight, stack size, and teleportability, or enable `Use Original Build Recipe` to build with the original materials.
+- **Sailing.** Adjust the exploration radius while aboard, ship propulsion, or the bonus per paddler. Use `Ashlands Field Repair Prefabs` to choose which ships can be repaired with Wood in boiling water.
+- **Carts and defenses.** Attach and detach carts from farther away, resize newly built battering rams, or change the troll trap's five-second rearm timer. Ballistas prioritize trophy targets and spare players and tamed creatures. Their ammo capacity is adjustable.
 
-![](https://i.ibb.co/2YmzVjPw/Screenshot-2025-08-27-005812.png)
+## Compatibility
 
-* Bottles can be configured with weight, stack size, and teleportability.
+- With **RockTheBoat** installed, BottleShips disables its exploration radius multiplier, ship power multiplier, and power paddling. Vehicle pins and Wood repairs remain available.
+- **Expand World Data** custom regions automatically use the boiling-water repair rule wherever the water deals Ashlands heat damage.
+- **Path of Valheiman** supplies free repairs while *Mending at Sea* is active. Its area repair skips ships that need Wood or are blocked by the boiling-water rule. Anchoring stops power paddling. If *Harbor Mark* shows duplicate ship markers, turn off `Enable Vehicle Map Pins` in BottleShips.
+- **Open Shipyard** packs a ship and its cargo into a Path of Valheiman crate. For a BottleShips ship, enable `Can Be Removed`, assign a `Build Station`, and pack outside its range. The default `None` leaves crate packing unavailable.
 
-![](https://i.ibb.co/TMXrG2bc/Screenshot-2025-08-27-004745.png)
+## Translations and credits
 
-![](https://i.ibb.co/Pv7kQCDr/Screenshot-2025-08-27-004620.png)
+English and Korean are included. To add a language, copy the bundled `BottleShips.English.yml`, rename it to `BottleShips.<Language>.yml`, and place your translation anywhere under `BepInEx`. [Bottle prefab IDs and English names](https://github.com/sighsorry1029/BottleShips/blob/main/BottleShips/translations/English.yml)
 
-![](https://i.ibb.co/8gsvRL2q/Screenshot-2025-08-27-004533.png)
-
-![](https://i.ibb.co/qMdjS4py/Screenshot-2025-08-27-004201.png)
-
-![](https://i.ibb.co/sYW6Srf/Screenshot-2025-08-27-004246.png)
-
-* Build full-size pieces using bottles, with optional station requirements.
-
-### My boats and carts on the map
-
-Under **01 - General**, set `Enable Vehicle Map Pins` to **Off** to hide BottleShips' boat and cart pins and their key hint across map openings and game sessions. This setting defaults to **On** and applies to your client only. You can turn it off if another mod already shows your vehicles.
-
-When enabled, opening the large map shows boats and carts built by your **current character**, using each vehicle's build icon. Positions refresh when you open the map or turn the setting back on with the map open, including vehicles outside your loaded area. Press **V** (`Toggle My Vehicle Pins Key`) to hide or show those positions until you close the map. BottleShips adds no minimap or saved pins.
-
-The original builder's character ID determines ownership, regardless of who is driving or currently owns the network object. Vehicles without a recorded builder are excluded. Both ordinary and bottle-based construction are supported, including modded prefabs using `Ship` or `Vagon` with a `Piece` build icon. This feature is independent of PortalRules and the handling/exploration tweaks disabled by RockTheBoat.
-
-The server and clients need this version of BottleShips. Requests are limited to one per connection per 0.5 seconds and 2048 vehicles per snapshot, with a message if the list is incomplete or unavailable.
-
-### Configuration
-
-BottleShips is configured through the normal BepInEx config file. No YAML editing is required.
-
-General options:
-
-* `Extended Cart Interaction`: client-only toggle that expands the normal attach/detach interaction of `Vagon`-based vehicles such as carts, battering rams, and catapults without adding a separate hotkey or tooltip. Default: `On`.
-* `Troll Trap Auto Reload Seconds`: automatically rearms `piece_trap_troll` after it triggers. Default: `5`. Range: `0-10`, where `0` disables it.
-* `Battering Ram Size`: scales newly placed battering rams. Default: `0.75`. Range: `0.5-1`. Existing placed battering rams are not changed.
-* `Ballista Targeting Tweaks`: trophy targets are prioritized, but the ballista can still attack other valid enemies. Players, tamed creatures, and creatures in the `PlayerSpawned` faction are never selected as targets.
-* `Ballista Ammo Capacity Multiplier`: multiplies the captured original ammunition capacity of all vanilla ballistas, so the hover display and compatible fill-all mods use the same limit. Default: `1` (original capacity). Range: `1-20`; lowering it does not delete stored excess ammo.
-
-Ship tweaks apply to every object with a `Ship` component, including ships added by other mods.
-
-Ship tweak options:
-
-* `Explore Radius Multiplier`: multiplies minimap exploration radius while aboard a ship. Default: `1`.
-* `Ship Power Multiplier`: scales wind-driven force at Half or Full and manual propulsion plus paddle steering at Slow or Back. It does not multiply speed-based steering or directly set top speed. Default: `1`.
-* `Power Paddling Bonus Per Player`: the helmsman and passengers seated in ship chairs can each hold Run to consume a base 10 stamina per second and add the configured share of the ship's globally scaled paddling force. Passive occupants add nothing. It works only at Back or Slow and is unavailable at Half or Full while the sails are deployed. Each active paddler gets a smooth `+10` effect on their own camera FOV; other paddlers do not stack additional FOV on that player. Default: `0.5` (50% per active player). Range: `0-1`, where `0` disables Power Paddling.
-* `Show Power Paddling HUD`: client-only On/Off setting, enabled by default and independent of the game's Key Hints setting. Eligible helmsmen and seated passengers see one short hint, "Press [Run key] to paddle", using the current keyboard binding or gamepad button. For the helmsman, it follows the steering icon on its right; for seated passengers, it stays at the bottom center of the screen regardless of camera direction. The hint disappears outside Back/Slow, when leaving the seat, while menus are open, or when the HUD is hidden. The helmsman's hint also hides when the steering position is behind the camera. Turning this setting off hides only the hint; Power Paddling still works.
-* `Ship Repair Durability Per Wood`: allows the repairing player to fully repair a ship outside its required build-station range by spending one Wood per configured amount of missing durability, rounded up. Station range is checked from the player's position. The configured build station is used when present; ships with `Build Station = None` use a Workbench as the repair-station fallback. Repairs within range remain free. While the hammer's repair piece is selected and a damaged field-repairable ship is targeted, the required amount is centered over the Wood icon beside the vanilla durability bar. Default: `200`. Range: `0-1000`, where `0` disables this feature and preserves vanilla repair behavior.
-* `Ashlands Field Repair Prefabs`: comma-separated, case-sensitive ship prefab names allowed to use field repair in boiling waters. Default: `VikingShip_Ashlands` (Drakkar). An empty list blocks field repair for all ships in those waters. This checks the **ship's position** using the same Ashlands ocean check as ship heat damage, so Expand World Data's custom boiling regions are included automatically without listing their biome names or requiring EWD. Merely using Ashlands weather or `nature: AshLands` without boiling water does not trigger this restriction. Repairs within station range and existing no-cost/no-workbench exceptions remain unchanged. A denied repair shows a message, hides the Wood cost, and consumes no Wood. Use ship names such as `VikingShip_Ashlands`, not bottle item names ending in `_bottle`.
-
-BottleShips disables its minimap, handling, and Power Paddling tweaks when RockTheBoat is installed to avoid applying the same features twice. Field ship repair remains available.
-
-Each bottle section can configure:
-
-* `Use Original Build Recipe`
-* `Build Station`
-* `Can Be Removed`
-* `Build Resources`
-* `Weight`
-* `Stack`
-* `Teleportable`
-* `Recipe Enabled`
-* `Recipe Station`
-* `Recipe Resources`
-
-All eleven bottle sections default to `Recipe Station = None, 1` (hand crafting) and `Can Be Removed = On`. Existing saved settings are preserved; these defaults apply to new entries or when resetting an entry to its default. `Build Station` is a separate requirement for placing the piece.
-
-Synced options are enforced from the server when BottleShips is installed on both server and clients. Client-only options, such as extended cart interaction, remain local.
-
-### Path of Valheiman compatibility
-
-BottleShips includes optional integration for Path of Valheiman. The integration has been statically checked against 5.1.2 and 6.0.7; this is not an in-game multiplayer validation. Path of Valheiman is not required or included in the package.
-
-* **Harbor Mark** controls Path of Valheiman's own ship markers. BottleShips displays its boat and cart pins independently of that talent. To use only Path of Valheiman's markers, set `Enable Vehicle Map Pins` to **Off** in BottleShips.
-* An active **Mending at Sea** effect uses Path of Valheiman's free ship repair, without BottleShips' Wood cost, cost indicator, or boiling-water restriction for Wood repairs. Refunding or disabling the talent restores the normal BottleShips rules.
-* Path of Valheiman's area repair skips ships that currently require paid BottleShips field repair or are blocked by its boiling-water rule. This also applies to ships with `Build Station = None`. Repairs within station range and existing free-repair exceptions remain available.
-* An anchored ship cannot use Power Paddling. Its hint, stamina consumption, extra force, and paddling FOV effect stop while the anchor is deployed.
-* **Open Shipyard** keeps its own packed-ship items and stored cargo. BottleShips does not also award a bottle during packing. Newly packed ships retain whether construction materials were paid, including the original discount, so redeploying a crate does not make a free-built ship refund materials. Older crates without this information are left unchanged.
-* BottleShips' `Can Be Removed` setting is respected for its four managed ships. `On` (the default) permits hammer removal and Path of Valheiman packing; `Off` prevents both. Path of Valheiman also requires a build station configured on the ship and packing outside that station's range; `Build Station = None` does not activate its crate path.
-
-Sailing bonuses, shipbuilding effects, cargo capacity, cart abilities, and exploration modifiers retain their existing behavior.
-
-### Localization support
-* There should be `BottleShips.English.yml` in plugins folder. Translate it to your language and put it anywhere inside of the Bepinex folder
-### List of prefabs
-* Raft_bottle
-*  Karve_bottle
-*  VikingShip_bottle
-*  VikingShip_Ashlands_bottle
-*  Cart_bottle
-*  BatteringRam_bottle
-*  Catapult_bottle
-*  portal_wood_bottle
-*  portal_stone_bottle
-*  piece_trap_troll_bottle
-*  piece_turret_bottle
-
-### Special Thanks
-* Many thanks to GraveBear for kindly teaching me Unity and for all the troubleshooting help!
-* A huge thanks to Azumatt for Modding tutorial videos, Itemmangertemplate and all the help!
+Thanks to GraveBear for teaching me Unity and helping with troubleshooting, and to Azumatt for the modding tutorials, ItemManager template, and support.
